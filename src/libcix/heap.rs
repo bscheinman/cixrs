@@ -169,6 +169,11 @@ impl<T> TreeHeap<T> where T: Default + Ord {
     fn pull_up(&mut self, left: HeapPtr, right: HeapPtr) -> HeapPtr {
         assert!(left != right || (left < 0 && right < 0));
 
+        // If either child is null then we can simply pull up the other child
+        // and take its entire subtree with it.  There is no need to
+        // recursively restructure that whole subtree as well.  Because we
+        // aren't moving around any other nodes we don't need to bother with any
+        // of the below bookkeeping.
         if left < 0 {
             return right;
         }
@@ -177,17 +182,24 @@ impl<T> TreeHeap<T> where T: Default + Ord {
             return left;
         }
 
+        // The child that gets pulled up will become the parent of the other
+        // child so we need to choose the child with the greater value to
+        // maintain the heap invariant.
         let go_left = {
             let left_node = self.get_node(left);
             let right_node = self.get_node(right);
             left_node.value > right_node.value
         };
 
+        // Pull up the appropriate node by making it the parent of both the
+        // opposite child node and its recursively reorganized subtree.
+        // We have to update the parent of the opposite child node but not the
+        // subtree because whichever node is pulled up from that will already
+        // have this node as its parent.
         if go_left {
             let mut left_md = self.get_node_md(left);
-            left_md.left_child =
-                self.pull_up(left_md.left_child,
-                             left_md.right_child);
+            left_md.left_child = self.pull_up(left_md.left_child,
+                                              left_md.right_child);
             left_md.right_child = right;
             self.set_node_md(left, left_md);
             self.update_size(left);
@@ -195,9 +207,8 @@ impl<T> TreeHeap<T> where T: Default + Ord {
             left
         } else {
             let mut right_md = self.get_node_md(right);
-            right_md.right_child =
-                self.pull_up(right_md.left_child,
-                             right_md.right_child);
+            right_md.right_child = self.pull_up(right_md.left_child,
+                                                right_md.right_child);
             right_md.left_child = left;
             self.set_node_md(right, right_md);
             self.update_size(right);
@@ -208,6 +219,10 @@ impl<T> TreeHeap<T> where T: Default + Ord {
 
     fn insert_node(&mut self, head: HeapPtr, new: HeapPtr) -> HeapPtr {
         assert!(head >= 0 && new >= 0);
+        
+        // Between the existing head of this subtree and the new node to insert,
+        // the one with the greater value will become the new head and the other
+        // will be recusrively pushed down the tree
         let (parent_index, descend_index) = {
             let head_node = self.get_node(head);
             let new_node = self.get_node(new);
@@ -231,6 +246,8 @@ impl<T> TreeHeap<T> where T: Default + Ord {
         // node, in which case it will be assigned a size of one.
         self.get_node_md_mut(parent_index).size = head_node.size + 1;
 
+        // If either child is null then we can just make the descending node a
+        // child of the new parent and stop there.
         if head_node.left_child < 0 {
             if head_node.right_child >= 0 {
                 self.get_node_md_mut(head_node.right_child).parent =
@@ -242,6 +259,7 @@ impl<T> TreeHeap<T> where T: Default + Ord {
                 parent_node.left_child = descend_index;
             }
             {
+                // The descending node is now a leaf node.
                 let descend_node = self.get_node_md_mut(descend_index);
                 descend_node.parent = parent_index;
                 descend_node.left_child = -1;
@@ -270,14 +288,16 @@ impl<T> TreeHeap<T> where T: Default + Ord {
 
         let left_size = self.get_node_md_mut(head_node.left_child).size;
         let right_size = self.get_node_md_mut(head_node.right_child).size;
-        let go_left = left_size < right_size;
+        let go_left = left_size <= right_size;
 
+        // Insert into the smaller subtree to keep the tree relatively balanced
         let child_index = if go_left {
             head_node.left_child
         } else {
             head_node.right_child
         };
 
+        // Recursively insert the descending node into the appropriate subtree
         let new_child = self.insert_node(child_index, descend_index);
         let mut parent_node = self.get_node_md(parent_index);
         if go_left {
@@ -287,12 +307,13 @@ impl<T> TreeHeap<T> where T: Default + Ord {
             parent_node.left_child = head_node.left_child;
             parent_node.right_child = new_child;
         }
-        parent_node.parent = head_node.parent;
 
         self.get_node_md_mut(parent_node.left_child).parent = parent_index;
         self.get_node_md_mut(parent_node.right_child).parent = parent_index;
 
+        parent_node.parent = head_node.parent;
         self.set_node_md(parent_index, parent_node);
+
         parent_index
     }
 
