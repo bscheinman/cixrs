@@ -216,7 +216,15 @@ impl<T> TreeHeap<T> where T: Default + Ord {
 
         let head_node = self.get_node_md(head);
 
-        // XXX: update node sizes appropriately
+        // Whichever node ends up as the new head of this subtree will have
+        // size equal to the size of the old subtree plus one
+        // This, along with the zero assignments below, are the only places
+        // where we need to update node size during insertion; the node that
+        // ends up being pushed down the tree will eventually either become the
+        // head of a lower subtree, in which case this assignment will take
+        // place in the corresponding recursive call, or it will become a leaf
+        // node, in which case it will be assigned a size of zero
+        self.get_node_md_mut(parent_index).size = head_node.size + 1;
 
         if head_node.left_child < 0 {
             if head_node.right_child >= 0 {
