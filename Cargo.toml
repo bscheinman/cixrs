@@ -1,0 +1,15 @@
+[package]
+name = "cixrs"
+version = "0.1.0"
+authors = ["Brendon Scheinman <bscheinman@gmail.com>"]
+
+[lib]
+name = "libcix"
+path = "src/libcix/lib.rs"
+
+[[bin]]
+name = "heap_test"
+path = "src/test/heap_test.rs"
+
+[dependencies]
+uuid = { version = "0.3", features = ["v4"] }
