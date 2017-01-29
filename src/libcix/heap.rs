@@ -1,5 +1,6 @@
 use std::cell::Cell;
 use std::cmp::{Ord, Ordering};
+use std::collections::HashSet;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::vec::Vec;
@@ -141,16 +142,16 @@ impl<T> TreeHeap<T> where T: Default + Ord {
         self.pool[i as usize].md.get_mut()
     }
 
-    fn update_size(&self, index: HeapPtr) {
+    fn update_size(&mut self, index: HeapPtr) {
         let mut node = self.get_node_md(index);
 
-        node.size = 0;
+        node.size = 1;
         if node.left_child >= 0 {
-             node.size += self.get_node_md(node.left_child).size;
+             node.size += self.get_node_md_mut(node.left_child).size;
         }
 
         if node.right_child >= 0 {
-            node.size += self.get_node_md(node.right_child).size;
+            node.size += self.get_node_md_mut(node.right_child).size;
         }
 
         self.set_node_md(index, node);
@@ -165,7 +166,7 @@ impl<T> TreeHeap<T> where T: Default + Ord {
         }
     }
 
-    fn pull_up(&self, left: HeapPtr, right: HeapPtr) -> HeapPtr {
+    fn pull_up(&mut self, left: HeapPtr, right: HeapPtr) -> HeapPtr {
         assert!(left != right || (left < 0 && right < 0));
 
         if left < 0 {
@@ -190,6 +191,7 @@ impl<T> TreeHeap<T> where T: Default + Ord {
             left_md.right_child = right;
             self.set_node_md(left, left_md);
             self.update_size(left);
+            self.get_node_md_mut(right).parent = left;
             left
         } else {
             let mut right_md = self.get_node_md(right);
@@ -199,6 +201,7 @@ impl<T> TreeHeap<T> where T: Default + Ord {
             right_md.left_child = left;
             self.set_node_md(right, right_md);
             self.update_size(right);
+            self.get_node_md_mut(left).parent = right;
             right
         }
     }
@@ -209,9 +212,10 @@ impl<T> TreeHeap<T> where T: Default + Ord {
             let head_node = self.get_node(head);
             let new_node = self.get_node(new);
 
-            match head_node.value.cmp(&new_node.value) {
-                Ordering::Greater => (head, new),
-                _       => (new, head)
+            if head_node.value > new_node.value {
+                (head, new)
+            } else {
+                (new, head)
             }
         };
 
@@ -298,11 +302,6 @@ impl<T> TreeHeap<T> where T: Default + Ord {
         let head = self.get_node_md(head_index);
         self.root = self.pull_up(head.left_child,
                                  head.right_child);
-        if self.root >= 0 {
-            let root = self.root;
-            self.get_node_md_mut(root).parent = -1;
-        }
-
         self.get_node(head_index).value
     }
 
@@ -335,6 +334,9 @@ impl<T> TreeHeap<T> where T: Default + Ord {
 
         if node.parent < 0 {
             self.root = replacement;
+            if replacement >= 0 {
+                self.get_node_md_mut(replacement).parent = -1;
+            }
         } else {
             {
                 let parent = self.get_node_md_mut(node.parent);
@@ -346,10 +348,67 @@ impl<T> TreeHeap<T> where T: Default + Ord {
                 }
             }
 
+            if replacement >= 0 {
+                self.get_node_md_mut(replacement).parent = node.parent;
+            }
+
             self.decrement_size(node.parent);
         }
 
+        // XXX: rebalance after removals?
+
         self.free_list.push(index);
+    }
+
+    fn validate_node(&self, i: HeapPtr, visited: &mut HashSet<HeapPtr>) {
+        if i < 0 {
+            return;
+        }
+
+        // Make sure this is actually a tree and that there aren't multiple
+        // nodes pointing to the same children
+        assert!(!visited.contains(&i));
+        visited.insert(i);
+
+        let mut child_size = 0;
+        let node = self.get_node(i);
+        let md = node.md.get();
+
+        // Ensure heap invariant (each node's value is greater than those of its
+        // children)
+        if md.left_child >= 0 {
+            let left_node = self.get_node(md.left_child);
+            let left_md = left_node.md.get();
+            assert!(left_node.value < node.value);
+            assert_eq!(left_md.parent, i);
+            child_size += left_md.size;
+        };
+
+        if md.right_child >= 0 {
+            let right_node = self.get_node(md.right_child);
+            let right_md = right_node.md.get();
+            assert!(right_node.value < node.value);
+
+            // XXX: Ideally we would ensure that subtrees are balanced with
+            // respect to each other but until we rebalance after removals this
+            // will not be guaranteed
+            //assert!(((child_size as i32) - (right_md.size as i32)).abs()
+                //<= 1);
+
+            assert_eq!(right_md.parent, i);
+            child_size += right_md.size;
+        };
+
+        assert_eq!(md.size, child_size + 1);
+
+        // Recursively ensure that child subtrees are valid as well
+        self.validate_node(md.left_child, visited);
+        self.validate_node(md.right_child, visited);
+    }
+
+    pub fn validate(&self) {
+        let mut visited = HashSet::new();
+        self.validate_node(self.root, &mut visited);
     }
 }
 

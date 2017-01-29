@@ -14,16 +14,18 @@ fn main() {
         println!("added {}", x);
         println!("new heap contents:");
         println!("{}", h);
+        h.validate();
         //println!("{:?}", h);
     }
-
-    println!("{:?}", h);
 
     for x in vec![8u32, 5u32, 2u32, 7u32] {
         println!("removing {}", x);
         h.remove(handles[x as usize].unwrap().clone());
         println!("new heap contents:");
         println!("{}", h);
+
+        //println!("===============================\n{:?}\n\n", h);
+        h.validate();
     }
 
     while !h.is_empty() {
@@ -31,5 +33,6 @@ fn main() {
         println!("popped {}", v);
         println!("new heap contents:");
         println!("{}", h);
+        h.validate();
     }
 }
