@@ -10,7 +10,7 @@ fn main() {
 
     //for x in vec![5u32, 1u32, 10u32] {
     for x in 0..10u32 {
-        handles.push(h.insert(|v| { *v =  x; }));
+        handles.push(h.insert(&x));
         println!("added {}", x);
         println!("new heap contents:");
         println!("{}", h);

@@ -19,13 +19,13 @@ struct HeapNodeMd {
 }
 
 #[derive(Debug)]
-struct HeapNode<T> where T: Default + Ord{
+struct HeapNode<T> where T: Copy + Default + Ord {
     value:  T,
     md:     Cell<HeapNodeMd>
 }
 
 #[derive(Debug)]
-pub struct TreeHeap<T> where T: Default + Ord {
+pub struct TreeHeap<T> where T: Copy + Default + Ord {
     root: HeapPtr,
     pool: Vec<HeapNode<T>>,
     free_list: Vec<HeapPtr>
@@ -54,10 +54,10 @@ impl HeapNodeMd {
     }
 }
 
-impl<T> HeapNode<T> where T: Default + Ord {
-    fn reset<F>(&mut self, ctor: F) where F: Fn(&mut T) {
+impl<T> HeapNode<T> where T: Copy + Default + Ord {
+    fn reset(&mut self, val: &T) where T: Copy {
         self.md.get_mut().reset();
-        ctor(&mut self.value);
+        self.value = *val;
     }
 
     fn new() -> HeapNode<T> {
@@ -68,13 +68,13 @@ impl<T> HeapNode<T> where T: Default + Ord {
     }
 }
 
-impl<T> Display for HeapNode<T> where T: Default + Display + Ord {
+impl<T> Display for HeapNode<T> where T: Copy + Default + Display + Ord {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{}", self.value)
     }
 }
 
-impl<T> TreeHeap<T> where T: Default + Ord {
+impl<T> TreeHeap<T> where T: Copy + Default + Ord {
     pub fn new(capacity: usize) -> TreeHeap<T> {
         let mut heap = TreeHeap {
             root: -1,
@@ -317,7 +317,7 @@ impl<T> TreeHeap<T> where T: Default + Ord {
         parent_index
     }
 
-    pub fn pop(&mut self) -> T where T: Copy {
+    pub fn pop(&mut self) -> T {
         assert!(self.root >= 0);
         let head_index = self.root;
         let head = self.get_node_md(head_index);
@@ -326,8 +326,7 @@ impl<T> TreeHeap<T> where T: Default + Ord {
         self.get_node(head_index).value
     }
 
-    pub fn insert<F>(&mut self, ctor: F) -> Result<HeapHandle, &'static str>
-            where F: Fn(&mut T) {
+    pub fn insert(&mut self, val: &T) -> Result<HeapHandle, &'static str> {
         // XXX: add option to grow list if necessary or make future-aware to
         // add when possible, but for now just fail
         let index = match self.free_list.pop() {
@@ -335,7 +334,7 @@ impl<T> TreeHeap<T> where T: Default + Ord {
             None => { return Err("heap full"); }
         };
 
-        self.get_node_mut(index).reset(ctor);
+        self.get_node_mut(index).reset(val);
 
         if self.root >= 0 {
             let old_root = self.root;
@@ -433,7 +432,7 @@ impl<T> TreeHeap<T> where T: Default + Ord {
     }
 }
 
-impl<T> Display for TreeHeap<T> where T: Default + Display + Ord {
+impl<T> Display for TreeHeap<T> where T: Copy + Default + Display + Ord {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let mut nodes = Vec::new();
         let mut children = Vec::new();
