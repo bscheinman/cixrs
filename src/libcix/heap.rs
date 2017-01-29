@@ -326,6 +326,16 @@ impl<T> TreeHeap<T> where T: Copy + Default + Ord {
         self.get_node(head_index).value
     }
 
+    fn insert_impl(&mut self, index: HeapPtr) {
+        if self.root >= 0 {
+            let old_root = self.root;
+            let new_root = self.insert_node(old_root, index);
+            self.root = new_root;
+        } else {
+            self.root = index;
+        }
+    }
+
     pub fn insert(&mut self, val: &T) -> Result<HeapHandle, &'static str> {
         // XXX: add option to grow list if necessary or make future-aware to
         // add when possible, but for now just fail
@@ -335,14 +345,7 @@ impl<T> TreeHeap<T> where T: Copy + Default + Ord {
         };
 
         self.get_node_mut(index).reset(val);
-
-        if self.root >= 0 {
-            let old_root = self.root;
-            let new_root = self.insert_node(old_root, index);
-            self.root = new_root;
-        } else {
-            self.root = index;
-        }
+        self.insert_impl(index);
 
         Ok(HeapHandle{ index: index })
     }
@@ -378,6 +381,13 @@ impl<T> TreeHeap<T> where T: Copy + Default + Ord {
         // XXX: rebalance after removals?
 
         self.free_list.push(index);
+    }
+
+    pub fn update(&mut self, h: HeapHandle, val: &T) {
+        self.remove(h);
+        let index = h.index;
+        self.get_node_mut(index).reset(val);
+        self.insert_impl(index);
     }
 
     fn validate_node(&self, i: HeapPtr, visited: &mut HashSet<HeapPtr>) {
