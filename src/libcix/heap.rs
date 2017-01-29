@@ -30,6 +30,7 @@ pub struct TreeHeap<T> where T: Default + Ord {
     free_list: Vec<HeapPtr>
 }
 
+#[derive(Clone, Copy)]
 pub struct HeapHandle {
     index: HeapPtr
 }
@@ -40,7 +41,7 @@ impl HeapNodeMd {
             parent:         -1,
             left_child:     -1,
             right_child:    -1,
-            size:           0
+            size:           1
         }
     }
 
@@ -48,7 +49,7 @@ impl HeapNodeMd {
         self.parent = -1;
         self.left_child = -1;
         self.right_child = -1;
-        self.size = 0;
+        self.size = 1;
     }
 }
 
@@ -218,12 +219,12 @@ impl<T> TreeHeap<T> where T: Default + Ord {
 
         // Whichever node ends up as the new head of this subtree will have
         // size equal to the size of the old subtree plus one
-        // This, along with the zero assignments below, are the only places
+        // This, along with the one assignments below, are the only places
         // where we need to update node size during insertion; the node that
         // ends up being pushed down the tree will eventually either become the
         // head of a lower subtree, in which case this assignment will take
         // place in the corresponding recursive call, or it will become a leaf
-        // node, in which case it will be assigned a size of zero
+        // node, in which case it will be assigned a size of one.
         self.get_node_md_mut(parent_index).size = head_node.size + 1;
 
         if head_node.left_child < 0 {
@@ -241,7 +242,7 @@ impl<T> TreeHeap<T> where T: Default + Ord {
                 descend_node.parent = parent_index;
                 descend_node.left_child = -1;
                 descend_node.right_child = -1;
-                descend_node.size = 0;
+                descend_node.size = 1;
             }
             return parent_index;
         }
@@ -258,26 +259,14 @@ impl<T> TreeHeap<T> where T: Default + Ord {
                 descend_node.parent = parent_index;
                 descend_node.left_child = -1;
                 descend_node.right_child = -1;
-                descend_node.size = 0;
+                descend_node.size = 1;
             }
             return parent_index;
         }
 
-        let go_left = {
-            let left_size = {
-                let left_node = self.get_node_md_mut(head_node.left_child);
-                left_node.parent = parent_index;
-                left_node.size
-            };
-
-            let right_size = {
-                let right_node = self.get_node_md_mut(head_node.right_child);
-                right_node.parent = parent_index;
-                right_node.size
-            };
-
-            left_size < right_size
-        };
+        let left_size = self.get_node_md_mut(head_node.left_child).size;
+        let right_size = self.get_node_md_mut(head_node.right_child).size;
+        let go_left = left_size < right_size;
 
         let child_index = if go_left {
             head_node.left_child
@@ -286,7 +275,7 @@ impl<T> TreeHeap<T> where T: Default + Ord {
         };
 
         let new_child = self.insert_node(child_index, descend_index);
-        let parent_node = self.get_node_md_mut(parent_index);
+        let mut parent_node = self.get_node_md(parent_index);
         if go_left {
             parent_node.left_child = new_child;
             parent_node.right_child = head_node.right_child;
@@ -296,6 +285,10 @@ impl<T> TreeHeap<T> where T: Default + Ord {
         }
         parent_node.parent = head_node.parent;
 
+        self.get_node_md_mut(parent_node.left_child).parent = parent_index;
+        self.get_node_md_mut(parent_node.right_child).parent = parent_index;
+
+        self.set_node_md(parent_index, parent_node);
         parent_index
     }
 
