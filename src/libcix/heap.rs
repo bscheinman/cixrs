@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::cmp::{Ord, Ordering};
 use std::fmt;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Display, Formatter};
 use std::vec::Vec;
 
 // I would prefer to use Option<u32> or something similar here but I don't
@@ -9,7 +9,7 @@ use std::vec::Vec;
 // it because in theory it could hold any value that can fit in 32 bits
 type HeapPtr = i32;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 struct HeapNodeMd {
     parent:         HeapPtr,
     left_child:     HeapPtr,
@@ -17,13 +17,11 @@ struct HeapNodeMd {
     size:           u32
 }
 
-#[derive(Debug)]
 struct HeapNode<T> where T: Default + Ord{
     value:  T,
     md:     Cell<HeapNodeMd>
 }
 
-#[derive(Debug)]
 pub struct TreeHeap<T> where T: Default + Ord {
     root: HeapPtr,
     pool: Vec<HeapNode<T>>,
@@ -68,8 +66,7 @@ impl<T> HeapNode<T> where T: Default + Ord {
 
 impl<T> Display for HeapNode<T> where T: Default + Display + Ord {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "Node({})", self.value);
-        Ok(())
+        write!(f, "{}", self.value)
     }
 }
 
@@ -93,13 +90,6 @@ impl<T> TreeHeap<T> where T: Default + Ord {
             None
         } else {
             Some(i)
-        }
-    }
-
-    fn as_ptr(o: Option<HeapPtr>) -> HeapPtr {
-        match o {
-            None => -1,
-            Some(i) => i
         }
     }
 
@@ -166,11 +156,9 @@ impl<T> TreeHeap<T> where T: Default + Ord {
     fn decrement_size(&mut self, index: HeapPtr) {
         let mut i = index;
         while i >= 0 {
-            let i = {
-                let md = self.get_node_md_mut(i);
-                md.size -= 1;
-                md.parent
-            };
+            let md = self.get_node_md_mut(i);
+            md.size -= 1;
+            i = md.parent;
         }
     }
 
@@ -351,28 +339,29 @@ impl<T> Display for TreeHeap<T> where T: Default + Display + Ord {
         let mut children = Vec::new();
 
         if self.root < 0 {
-            write!(f, "empty heap");
-            return Ok(());
+            return write!(f, "empty heap");
         } else {
             nodes.push(self.root);
         }
 
         while !nodes.is_empty() {
             for i in nodes {
-                let node = self.get_node(i);
-                let node_md = node.md.get();
+                if i >= 0 {
+                    let node = self.get_node(i);
+                    let node_md = node.md.get();
 
-                write!(f, "{} ", node);
-                if node_md.left_child >= 0 {
+                    try!(write!(f, "{} ", node));
                     children.push(node_md.left_child);
-                }
-                if node_md.right_child >= 0 {
                     children.push(node_md.right_child);
+                } else {
+                    try!(write!(f, "_ "));
                 }
             }
 
             nodes = children;
             children = Vec::new();
+
+            try!(write!(f, "\n"));
         }
 
         Ok(())
