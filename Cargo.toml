@@ -11,5 +11,9 @@ path = "src/libcix/lib.rs"
 name = "heap_test"
 path = "src/test/heap_test.rs"
 
+[[bin]]
+name = "book_test"
+path = "src/test/book_test.rs"
+
 [dependencies]
 uuid = { version = "0.3", features = ["v4"] }

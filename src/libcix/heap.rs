@@ -3,6 +3,7 @@ use std::cmp::{Ord, Ordering};
 use std::collections::HashSet;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
+use std::marker::PhantomData;
 use std::vec::Vec;
 
 // I would prefer to use Option<u32> or something similar here but I don't
@@ -19,16 +20,41 @@ struct HeapNodeMd {
 }
 
 #[derive(Debug)]
-struct HeapNode<T> where T: Copy + Default + Ord {
+struct HeapNode<T> where T: Copy + Default {
     value:  T,
     md:     Cell<HeapNodeMd>
 }
 
+pub trait Comparer<T> {
+    fn compare(x: &T, y: &T) -> Ordering;
+}
+
+pub struct DefaultComparer<T> {
+    phantom: PhantomData<T>
+}
+
+impl<T> Comparer<T> for DefaultComparer<T> where T: Ord {
+    fn compare(x: &T, y: &T) -> Ordering {
+        x.cmp(y)
+    }
+}
+
 #[derive(Debug)]
-pub struct TreeHeap<T> where T: Copy + Default + Ord {
+pub struct TreeHeap<T, TCmp> where T: Copy + Default, TCmp: Comparer<T> {
     root: HeapPtr,
     pool: Vec<HeapNode<T>>,
-    free_list: Vec<HeapPtr>
+    free_list: Vec<HeapPtr>,
+    phantom: PhantomData<TCmp>
+}
+
+pub struct TreeHeapOrd<T> where T: Copy + Default + Ord {
+    phantom: PhantomData<T>
+}
+
+impl<T> TreeHeapOrd<T> where T: Copy + Default + Ord {
+    pub fn new(capacity: usize) -> TreeHeap<T, DefaultComparer<T>> {
+        TreeHeap::new(capacity)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -54,10 +80,9 @@ impl HeapNodeMd {
     }
 }
 
-impl<T> HeapNode<T> where T: Copy + Default + Ord {
-    fn reset(&mut self, val: &T) where T: Copy {
+impl<T> HeapNode<T> where T: Copy + Default {
+    fn reset(&mut self) {
         self.md.get_mut().reset();
-        self.value = *val;
     }
 
     fn new() -> HeapNode<T> {
@@ -68,18 +93,19 @@ impl<T> HeapNode<T> where T: Copy + Default + Ord {
     }
 }
 
-impl<T> Display for HeapNode<T> where T: Copy + Default + Display + Ord {
+impl<T> Display for HeapNode<T> where T: Copy + Default + Display {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{}", self.value)
     }
 }
 
-impl<T> TreeHeap<T> where T: Copy + Default + Ord {
-    pub fn new(capacity: usize) -> TreeHeap<T> {
+impl<T, TCmp> TreeHeap<T, TCmp> where T: Copy + Default, TCmp: Comparer<T> {
+    pub fn new(capacity: usize) -> TreeHeap<T, TCmp> {
         let mut heap = TreeHeap {
             root: -1,
             pool: Vec::with_capacity(capacity),
-            free_list: (0..(capacity as i32)).rev().collect()
+            free_list: (0..(capacity as i32)).rev().collect(),
+            phantom: PhantomData
         };
 
         for _ in 0..capacity {
@@ -102,7 +128,7 @@ impl<T> TreeHeap<T> where T: Copy + Default + Ord {
     }
 
     pub fn peek(&self) -> Option<HeapHandle> {
-        Self::as_option(self.root).map(|x| {HeapHandle{ index: x }})
+        Self::as_option(self.root).map(|x| { HeapHandle { index: x } })
     }
 
     pub fn get(&self, h: HeapHandle) -> &T {
@@ -188,7 +214,10 @@ impl<T> TreeHeap<T> where T: Copy + Default + Ord {
         let go_left = {
             let left_node = self.get_node(left);
             let right_node = self.get_node(right);
-            left_node.value > right_node.value
+            match TCmp::compare(&left_node.value, &right_node.value) {
+                Ordering::Greater => true,
+                _ => false
+            }
         };
 
         // Pull up the appropriate node by making it the parent of both the
@@ -227,10 +256,9 @@ impl<T> TreeHeap<T> where T: Copy + Default + Ord {
             let head_node = self.get_node(head);
             let new_node = self.get_node(new);
 
-            if head_node.value > new_node.value {
-                (head, new)
-            } else {
-                (new, head)
+            match TCmp::compare(&head_node.value, &new_node.value) {
+                Ordering::Less => (new, head),
+                _ => (head, new)
             }
         };
 
@@ -344,7 +372,12 @@ impl<T> TreeHeap<T> where T: Copy + Default + Ord {
             None => { return Err("heap full"); }
         };
 
-        self.get_node_mut(index).reset(val);
+        {
+            let node = self.get_node_mut(index);
+            node.reset();
+            node.value = *val;
+        }
+
         self.insert_impl(index);
 
         Ok(HeapHandle{ index: index })
@@ -383,10 +416,17 @@ impl<T> TreeHeap<T> where T: Copy + Default + Ord {
         self.free_list.push(index);
     }
 
-    pub fn update(&mut self, h: HeapHandle, val: &T) {
-        self.remove(h);
+    // XXX: For now just remove and readd the node; in the future it might be
+    // worth exploring an approach involving moving the node up or down the tree
+    // as necessary
+    pub fn update<F>(&mut self, h: HeapHandle, f: F) where F: Fn(&mut T) {
         let index = h.index;
-        self.get_node_mut(index).reset(val);
+        f(&mut self.get_node_mut(index).value);
+
+        // XXX: Check whether node's ordering changed and leave it in place if
+        // possible
+        self.remove(h);
+        self.get_node_mut(index).reset();
         self.insert_impl(index);
     }
 
@@ -409,7 +449,8 @@ impl<T> TreeHeap<T> where T: Copy + Default + Ord {
         if md.left_child >= 0 {
             let left_node = self.get_node(md.left_child);
             let left_md = left_node.md.get();
-            assert!(left_node.value < node.value);
+            assert_ne!(TCmp::compare(&left_node.value, &node.value),
+                Ordering::Greater);
             assert_eq!(left_md.parent, i);
             child_size += left_md.size;
         };
@@ -417,7 +458,8 @@ impl<T> TreeHeap<T> where T: Copy + Default + Ord {
         if md.right_child >= 0 {
             let right_node = self.get_node(md.right_child);
             let right_md = right_node.md.get();
-            assert!(right_node.value < node.value);
+            assert_ne!(TCmp::compare(&right_node.value, &node.value),
+                Ordering::Greater);
 
             // XXX: Ideally we would ensure that subtrees are balanced with
             // respect to each other but until we rebalance after removals this
@@ -442,7 +484,8 @@ impl<T> TreeHeap<T> where T: Copy + Default + Ord {
     }
 }
 
-impl<T> Display for TreeHeap<T> where T: Copy + Default + Display + Ord {
+impl<T, TCmp> Display for TreeHeap<T, TCmp>
+        where T: Copy + Default + Display, TCmp: Comparer<T> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let mut nodes = Vec::new();
         let mut children = Vec::new();

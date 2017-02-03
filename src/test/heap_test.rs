@@ -3,7 +3,7 @@ extern crate libcix;
 use libcix::heap;
 
 fn main() {
-    let mut h = heap::TreeHeap::new(16);
+    let mut h = heap::TreeHeapOrd::new(16);
     let mut handles = Vec::new();
 
     println!("{}", h);
