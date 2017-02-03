@@ -1,4 +1,5 @@
 use std::cmp::{min, Ordering};
+use std::fmt::Debug;
 use std::collections::HashMap;
 
 use order::trade_types::*;
@@ -11,7 +12,10 @@ trait OrderComparer: heap::Comparer<Order> {
                         quantity: Quantity) -> Execution;
 }
 
+#[derive(Debug)]
 struct BuyComparer;
+
+#[derive(Debug)]
 struct SellComparer;
 
 impl OrderComparer for BuyComparer {
@@ -99,13 +103,13 @@ pub trait ExecutionHandler {
 impl<TCmp> BookSide<TCmp> where TCmp: OrderComparer {
     fn new() -> BookSide<TCmp> {
         BookSide {
-            orders: heap::TreeHeap::new(1024)
+            orders: heap::TreeHeap::new(4)
         }
     }
 }
 
 impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
-        where TCmp: OrderComparer {
+        where TCmp: Debug + OrderComparer {
     fn add_order(&mut self, new_order: &Order) -> heap::HeapHandle {
         let handle = self.orders.insert(new_order).unwrap();
 
@@ -138,6 +142,8 @@ impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
             });
 
             if self.orders.get(handle).quantity == 0 {
+                println!("removing order {} from book",
+                         self.orders.get(handle).id);
                 self.orders.remove(handle);
             }
 
@@ -163,6 +169,11 @@ impl OrderBook {
             sells:      BookSide::<SellComparer>::new(),
             all_orders: HashMap::new()
         }
+    }
+
+    pub fn print_books(&self) {
+        println!("{}", self.buys.orders);
+        println!("{}", self.sells.orders);
     }
 }
 

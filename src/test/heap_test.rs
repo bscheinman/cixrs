@@ -3,7 +3,7 @@ extern crate libcix;
 use libcix::heap;
 
 fn main() {
-    let mut h = heap::TreeHeapOrd::new(16);
+    let mut h = heap::TreeHeapOrd::new(32);
     let mut handles = Vec::new();
 
     println!("{}", h);
@@ -16,6 +16,13 @@ fn main() {
         println!("{}", h);
         h.validate();
         //println!("{:?}", h);
+    }
+
+    for x in 0..10u32 {
+        h.update(handles[x as usize].unwrap(), |v| { *v = *v * 3 });
+        println!("new heap contents:");
+        println!("{}", h);
+        h.validate();
     }
 
     for x in vec![8u32, 5u32, 2u32, 7u32] {

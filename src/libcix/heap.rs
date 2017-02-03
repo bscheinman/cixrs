@@ -383,7 +383,7 @@ impl<T, TCmp> TreeHeap<T, TCmp> where T: Copy + Default, TCmp: Comparer<T> {
         Ok(HeapHandle{ index: index })
     }
 
-    pub fn remove(&mut self, h: HeapHandle) {
+    fn remove_impl(&mut self, h: HeapHandle) {
         let index = h.index;
         let node = self.get_node_md(index);
         let replacement = self.pull_up(node.left_child, node.right_child);
@@ -412,8 +412,11 @@ impl<T, TCmp> TreeHeap<T, TCmp> where T: Copy + Default, TCmp: Comparer<T> {
         }
 
         // XXX: rebalance after removals?
+    }
 
-        self.free_list.push(index);
+    pub fn remove(&mut self, h: HeapHandle) {
+        self.remove_impl(h);
+        self.free_list.push(h.index);
     }
 
     // XXX: For now just remove and readd the node; in the future it might be
@@ -425,7 +428,7 @@ impl<T, TCmp> TreeHeap<T, TCmp> where T: Copy + Default, TCmp: Comparer<T> {
 
         // XXX: Check whether node's ordering changed and leave it in place if
         // possible
-        self.remove(h);
+        self.remove_impl(h);
         self.get_node_mut(index).reset();
         self.insert_impl(index);
     }

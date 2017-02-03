@@ -70,6 +70,13 @@ pub mod trade_types {
         pub quantity:   Quantity
     }
 
+    impl fmt::Display for Order {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "Order {}: {:?} {} shares of {} @ {}",
+                   self.id, self.side, self.quantity, self.symbol, self.price)
+        }
+    }
+
     impl fmt::Display for Execution {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             write!(f, "Execution {}: {} bought {} shares of {} from {} @ {}",
