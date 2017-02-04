@@ -2,6 +2,7 @@
 name = "cixrs"
 version = "0.1.0"
 authors = ["Brendon Scheinman <bscheinman@gmail.com>"]
+build = "build.rs"
 
 [lib]
 name = "libcix"
@@ -16,4 +17,9 @@ name = "book_test"
 path = "src/test/book_test.rs"
 
 [dependencies]
+capnp = "0.8"
+time = "0.1"
 uuid = { version = "0.3", features = ["v4"] }
+
+[build-dependencies]
+capnpc = "*"

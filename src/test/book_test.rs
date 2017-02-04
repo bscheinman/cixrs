@@ -5,6 +5,8 @@ use libcix::book::*;
 use libcix::order::trade_types::*;
 use uuid::Uuid;
 
+const SYMBOL: &'static str = "GOOG";
+
 struct ExecutionPrinter;
 
 impl ExecutionHandler for ExecutionPrinter {
@@ -16,7 +18,7 @@ impl ExecutionHandler for ExecutionPrinter {
 fn create_order(side: OrderSide, price: Price, quantity: Quantity) -> Order {
     let mut o = Order::default();
     o.id = Uuid::new_v4();
-    o.symbol = "GOOG";
+    o.symbol = Symbol::from_str(SYMBOL).unwrap();
     o.side = side;
     o.price = price;
     o.quantity = quantity;
@@ -24,7 +26,7 @@ fn create_order(side: OrderSide, price: Price, quantity: Quantity) -> Order {
 }
 
 fn main() {
-    let mut book = OrderBook::new("GOOG");
+    let mut book = OrderBook::new(Symbol::from_str(SYMBOL).unwrap());
     let mut matcher = BasicMatcher{};
     let printer = ExecutionPrinter{};
 
