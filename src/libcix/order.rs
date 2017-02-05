@@ -165,7 +165,7 @@ pub mod trade_types {
         }
     }
 
-    fn read_uuid(r: cp::uuid::Reader) -> Result<uuid::Uuid, Error> {
+    pub fn read_uuid(r: cp::uuid::Reader) -> Result<uuid::Uuid, Error> {
         let bytes = try!(r.get_bytes().map_err(|e| {
             Error::new(ErrorCode::Other, "missing bytes".to_string())
         }));
@@ -195,7 +195,7 @@ pub mod trade_types {
     fn read_symbol(r: capnp::text::Reader) -> Result<Symbol, Error> {
         let raw_sym = r.as_bytes();
 
-        Symbol::from_bytes(raw_sym).map_err(|e| {
+        Symbol::from_bytes(raw_sym).map_err(|_| {
             Error::new(ErrorCode::Other, "invalid symbol".to_string())
         })
     }

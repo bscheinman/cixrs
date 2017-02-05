@@ -3,7 +3,6 @@
 struct Order {
     id          @0 :Uuid;
     user        @1 :Uuid;
-
     symbol      @2 :Text;
     side        @3 :OrderSide;
     price       @4 :Float64;
@@ -34,4 +33,36 @@ struct Uuid {
 struct Timestamp {
     seconds     @0 :Int64;
     nanos       @1 :Int32;
+}
+
+enum ErrorCode {
+    ok @0;
+}
+
+enum AuthCode {
+    ok @0;
+    invalid @1;
+}
+
+struct NewOrder {
+    symbol      @0 :Text;
+    side        @1 :OrderSide;
+    price       @2 :Float64;
+    quantity    @3 :UInt32;
+}
+
+struct ChangeOrder {
+    id          @0 :Uuid;
+    price       @1 :Float64;
+    quantity    @2 :UInt32;
+}
+
+interface TradingSession {
+    authenticate @0 (user :Uuid) -> (response :AuthCode);
+    #newOrder @1 (order :NewOrder) -> (code :ErrorCode, id :Uuid);
+    #changeOrder @2 (change :ChangeOrder) -> (response :Bool);
+}
+
+interface ExecutionFeed {
+    execution @0 (execution: Execution) -> ();
 }

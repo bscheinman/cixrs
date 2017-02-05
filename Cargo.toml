@@ -16,9 +16,20 @@ path = "src/test/heap_test.rs"
 name = "book_test"
 path = "src/test/book_test.rs"
 
+[[bin]]
+name = "cixsrv"
+path = "src/server/server.rs"
+
+[[bin]]
+name = "cixcli"
+path = "src/client/client.rs"
+
 [dependencies]
 capnp = "0.8"
+capnp-rpc = { git = "https://github.com/dwrensha/capnp-rpc-rust" }
+futures = "0.1"
 time = "0.1"
+tokio-core = "0.1"
 uuid = { version = "0.3", features = ["v4"] }
 
 [build-dependencies]
