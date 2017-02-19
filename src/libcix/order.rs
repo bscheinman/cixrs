@@ -243,8 +243,11 @@ pub mod trade_types {
 
     pub struct Execution {
         pub id:         ExecutionId,
+        pub ts:         OrderTime,
         pub buy_order:  OrderId,
+        pub buy_user:   UserId,
         pub sell_order: OrderId,
+        pub sell_user:  UserId,
         pub symbol:     Symbol,
         pub price:      Price,
         pub quantity:   Quantity

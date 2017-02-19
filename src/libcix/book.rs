@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use order::trade_types::*;
 use heap;
+use time;
 use uuid::Uuid;
 
 trait OrderComparer: heap::Comparer<Order> {
@@ -27,8 +28,11 @@ impl OrderComparer for BuyComparer {
                         quantity: Quantity) -> Execution {
         Execution {
             symbol:     book_order.symbol,
+            ts:         time::now().to_timespec(),
             id:         Uuid::new_v4(), 
+            buy_user:   book_order.user,
             buy_order:  book_order.id,
+            sell_user:  new_order.user,
             sell_order: new_order.id,
             price:      book_order.price,
             quantity:   quantity
@@ -61,8 +65,11 @@ impl OrderComparer for SellComparer {
                         quantity: Quantity) -> Execution {
         Execution {
             symbol:     book_order.symbol,
+            ts:         time::now().to_timespec(),
             id:         Uuid::new_v4(), 
+            buy_user:   new_order.user,
             buy_order:  new_order.id,
+            sell_user:  book_order.user,
             sell_order: book_order.id,
             price:      book_order.price,
             quantity:   quantity
@@ -97,7 +104,7 @@ struct BookSide<TCmp> where TCmp: OrderComparer {
 }
 
 pub trait ExecutionHandler: Send {
-    fn handle_match(&self, execution: &Execution);
+    fn handle_match(&self, execution: Execution);
 }
 
 impl<TCmp> BookSide<TCmp> where TCmp: OrderComparer {
@@ -133,12 +140,13 @@ impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
 
                 TCmp::create_execution(&new_order, book_order, cross_quantity)
             };
+            let quantity = ex.quantity;
 
-            handler.handle_match(&ex);
-            new_order.quantity -= ex.quantity;
+            handler.handle_match(ex);
+            new_order.quantity -= quantity;
 
             self.orders.update(handle, |order| {
-                order.quantity -= ex.quantity;
+                order.quantity -= quantity;
             });
 
             if self.orders.get(handle).quantity == 0 {

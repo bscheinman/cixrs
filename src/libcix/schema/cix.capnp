@@ -10,6 +10,15 @@ struct Order {
     updated     @6 :Timestamp;
 }
 
+struct UserExecution {
+    id          @0 :Uuid;
+    ts          @1 :Timestamp;
+    order       @2 :Uuid;
+    symbol      @3 :Text;
+    price       @4 :Float64;
+    quantity    @5 :UInt32;
+}
+
 struct Execution {
     id          @0 :Uuid;
     ts          @1 :Timestamp;
@@ -37,7 +46,8 @@ struct Timestamp {
 
 enum ErrorCode {
     ok @0;
-    internalError @1;
+    notAuthenticated @1;
+    alreadySubscribed @2;
 }
 
 enum AuthCode {
@@ -61,9 +71,13 @@ struct ChangeOrder {
 interface TradingSession {
     authenticate @0 (user :Uuid) -> (response :AuthCode);
     newOrder @1 (order :NewOrder) -> (code :ErrorCode, id :Uuid);
+    executionSubscribe @2 (feed :ExecutionFeed)
+        -> (code :ErrorCode, sub :ExecutionFeedSubscription);
     #changeOrder @2 (change :ChangeOrder) -> (response :Bool);
 }
 
+interface ExecutionFeedSubscription {}
+
 interface ExecutionFeed {
-    execution @0 (execution: Execution) -> ();
+    execution @0 (execution: UserExecution) -> ();
 }

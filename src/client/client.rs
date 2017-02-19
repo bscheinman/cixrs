@@ -57,9 +57,10 @@ fn process_line(core: &mut reactor::Core, cli: &trading_session::Client,
                                  .unwrap()).unwrap();
             println!("order accepted with ID {}", order_id);
         },
-        cp::ErrorCode::InternalError => {
-            panic!("internal server error");
+        cp::ErrorCode::NotAuthenticated => {
+            println!("order rejected because user not signed in");
         },
+        _ => { unreachable!() }
     }
 }
 

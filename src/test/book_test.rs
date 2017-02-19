@@ -10,7 +10,7 @@ const SYMBOL: &'static str = "GOOG";
 struct ExecutionPrinter;
 
 impl ExecutionHandler for ExecutionPrinter {
-    fn handle_match(&self, execution: &Execution) {
+    fn handle_match(&self, execution: Execution) {
         println!("{}", execution)
     }
 }
