@@ -50,7 +50,10 @@ impl EngineHandle {
         let h_clone = handler.clone();
 
         thread::spawn(move || -> Result<(), String> {
-            let mut engine = try!(OrderEngine::new(symbols, m_clone, h_clone));
+            let mut engine = OrderEngine::new(symbols, m_clone, h_clone)
+                .unwrap_or_else(|e| {
+                    panic!("failed to create order engine: {}", e)
+                });
             let mut core = reactor::Core::new().unwrap();
             let (tx, rx) = mpsc::channel(BUFFER_SIZE);
 
@@ -67,7 +70,9 @@ impl EngineHandle {
         });
 
         Ok(EngineHandle {
-            tx: channel_rx.wait().unwrap()
+            tx: channel_rx.wait().unwrap_or_else(|e| {
+                panic!("failed to get channel handle: {}", e)
+            })
         })
     }
 }
@@ -84,9 +89,9 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
         };
 
         for symbol in symbols {
-            if let None =
+            if let Some(_) =
                     engine.books.insert(symbol, book::OrderBook::new(symbol)) {
-                return Err("duplicate symbol".to_string());
+                return Err(format!("duplicate symbol {}", symbol.as_str()));
             }
         }
 

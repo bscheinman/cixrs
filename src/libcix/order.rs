@@ -50,13 +50,15 @@ pub mod trade_types {
         pub fn from_str(s: &str) -> Result<Self, ()> {
             Self::from_bytes(s.as_bytes())
         }
+
+        pub fn as_str(&self) -> &str {
+            from_utf8(&self.s).unwrap()
+        }
     }
 
     impl fmt::Display for Symbol {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "{}", try!(from_utf8(&self.s).map_err(|_| {
-                fmt::Error
-            })))
+            write!(f, "{}", self.as_str())
         }
     }
 
