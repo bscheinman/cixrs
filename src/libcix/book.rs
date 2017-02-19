@@ -87,7 +87,7 @@ impl heap::Comparer<Order> for SellComparer {
 }
 
 trait OrderProcessor<THandle> {
-    fn add_order(&mut self, new_order: &Order) -> THandle;
+    fn add_order(&mut self, new_order: Order) -> THandle;
     fn match_order(&mut self, new_order: &mut Order,
                    handler: &ExecutionHandler);
 }
@@ -96,7 +96,7 @@ struct BookSide<TCmp> where TCmp: OrderComparer {
     orders: heap::TreeHeap<Order, TCmp>
 }
 
-pub trait ExecutionHandler {
+pub trait ExecutionHandler: Send {
     fn handle_match(&self, execution: &Execution);
 }
 
@@ -110,7 +110,7 @@ impl<TCmp> BookSide<TCmp> where TCmp: OrderComparer {
 
 impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
         where TCmp: Debug + OrderComparer {
-    fn add_order(&mut self, new_order: &Order) -> heap::HeapHandle {
+    fn add_order(&mut self, new_order: Order) -> heap::HeapHandle {
         let handle = self.orders.insert(new_order).unwrap();
 
         handle
@@ -142,8 +142,6 @@ impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
             });
 
             if self.orders.get(handle).quantity == 0 {
-                println!("removing order {} from book",
-                         self.orders.get(handle).id);
                 self.orders.remove(handle);
             }
 
@@ -157,8 +155,7 @@ impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
 pub struct OrderBook {
     symbol:     Symbol,
     buys:       BookSide<BuyComparer>,
-    sells:      BookSide<SellComparer>,
-    all_orders: HashMap<OrderId, heap::HeapHandle>
+    sells:      BookSide<SellComparer>
 }
 
 impl OrderBook {
@@ -166,8 +163,7 @@ impl OrderBook {
         OrderBook {
             symbol:     symbol,
             buys:       BookSide::<BuyComparer>::new(),
-            sells:      BookSide::<SellComparer>::new(),
-            all_orders: HashMap::new()
+            sells:      BookSide::<SellComparer>::new()
         }
     }
 
@@ -177,16 +173,19 @@ impl OrderBook {
     }
 }
 
-pub trait OrderMatcher {
+pub trait OrderMatcher: Send {
     fn add_order<T: ExecutionHandler>(&mut self, book: &mut OrderBook,
-                                      order: &mut Order, handler: &T);
+                                      order: Order, handler: &T);
 }
 
+#[derive(Clone)]
 pub struct BasicMatcher;
 
 impl OrderMatcher for BasicMatcher {
     fn add_order<T: ExecutionHandler>(&mut self, book: &mut OrderBook,
-                                      order: &mut Order, handler: &T) {
+                                      order: Order, handler: &T) {
+        let mut o = order;
+
         {
             let counter_book: &mut OrderProcessor<heap::HeapHandle> =
                     match order.side {
@@ -194,16 +193,16 @@ impl OrderMatcher for BasicMatcher {
                 OrderSide::Sell => &mut book.buys
             };
 
-            counter_book.match_order(order, handler);
+            counter_book.match_order(&mut o, handler);
         }
 
-        if order.quantity > 0 {
+        if o.quantity > 0 {
             let book: &mut OrderProcessor<heap::HeapHandle> = match order.side {
                 OrderSide::Buy  => &mut book.buys,
                 OrderSide::Sell => &mut book.sells
             };
 
-            book.add_order(order);
+            book.add_order(o);
         }
     }
 }

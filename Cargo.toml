@@ -28,6 +28,7 @@ path = "src/client/client.rs"
 capnp = "0.8"
 capnp-rpc = { git = "https://github.com/dwrensha/capnp-rpc-rust" }
 futures = "0.1"
+futures-cpupool = "0.1"
 time = "0.1"
 tokio-core = "0.1"
 uuid = { version = "0.3", features = ["v4"] }

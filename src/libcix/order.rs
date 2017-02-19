@@ -19,7 +19,10 @@ pub mod trade_types {
     pub type Quantity = u32;
     pub type OrderTime = time::Timespec;
 
-    #[derive(Clone, Copy, Debug)]
+    // XXX: These dervied traits rely on the assumption that all bytes after the
+    // initial NUL byte will also be NUL, but we can maintain that invariant
+    // below
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct Symbol {
         pub s: [u8; SYMBOL_MAX_LENGTH]
     }
@@ -165,8 +168,25 @@ pub mod trade_types {
         }
     }
 
+    impl Order {
+        pub fn new(user: UserId, o: &cp::new_order::Reader) ->
+                Result<Self, Error> {
+            let symbol = try!(read_symbol(try!(o.get_symbol())));
+
+            Ok(Order {
+                id: uuid::Uuid::new_v4(),
+                user: user.clone(),
+                symbol: symbol.clone(),
+                side: OrderSide::from(try!(o.get_side())),
+                price: o.get_price(),
+                quantity: o.get_quantity(),
+                update: time::now().to_timespec()
+            })
+        }
+    }
+
     pub fn read_uuid(r: cp::uuid::Reader) -> Result<uuid::Uuid, Error> {
-        let bytes = try!(r.get_bytes().map_err(|e| {
+        let bytes = try!(r.get_bytes().map_err(|_| {
             Error::new(ErrorCode::Other, "missing bytes".to_string())
         }));
 
@@ -185,14 +205,14 @@ pub mod trade_types {
         Ok(res)
     }
 
-    fn read_timestamp(r: cp::timestamp::Reader) -> time::Timespec {
+    pub fn read_timestamp(r: cp::timestamp::Reader) -> time::Timespec {
         time::Timespec {
             sec:    r.get_seconds(),
             nsec:   r.get_nanos()
         }
     }
 
-    fn read_symbol(r: capnp::text::Reader) -> Result<Symbol, Error> {
+    pub fn read_symbol(r: capnp::text::Reader) -> Result<Symbol, Error> {
         let raw_sym = r.as_bytes();
 
         Symbol::from_bytes(raw_sym).map_err(|_| {

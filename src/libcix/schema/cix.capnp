@@ -37,6 +37,7 @@ struct Timestamp {
 
 enum ErrorCode {
     ok @0;
+    internalError @1;
 }
 
 enum AuthCode {
@@ -59,7 +60,7 @@ struct ChangeOrder {
 
 interface TradingSession {
     authenticate @0 (user :Uuid) -> (response :AuthCode);
-    #newOrder @1 (order :NewOrder) -> (code :ErrorCode, id :Uuid);
+    newOrder @1 (order :NewOrder) -> (code :ErrorCode, id :Uuid);
     #changeOrder @2 (change :ChangeOrder) -> (response :Bool);
 }
 

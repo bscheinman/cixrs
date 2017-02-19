@@ -364,7 +364,7 @@ impl<T, TCmp> TreeHeap<T, TCmp> where T: Copy + Default, TCmp: Comparer<T> {
         }
     }
 
-    pub fn insert(&mut self, val: &T) -> Result<HeapHandle, &'static str> {
+    pub fn insert(&mut self, val: T) -> Result<HeapHandle, &'static str> {
         // XXX: add option to grow list if necessary or make future-aware to
         // add when possible, but for now just fail
         let index = match self.free_list.pop() {
@@ -375,7 +375,7 @@ impl<T, TCmp> TreeHeap<T, TCmp> where T: Copy + Default, TCmp: Comparer<T> {
         {
             let node = self.get_node_mut(index);
             node.reset();
-            node.value = *val;
+            node.value = val;
         }
 
         self.insert_impl(index);
