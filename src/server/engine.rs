@@ -153,14 +153,18 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
 
         // XXX: really the books should be stored directly in a vector and the lookup hashmap
         // would point into that
-        let book = self.books.get(&self.symbols[sym_id as usize]).unwrap();
-        let order = try!(book.get_order(msg.order_id).ok_or("nonexistent order id".to_string()));
+        let mut book = self.books.get_mut(&self.symbols[sym_id as usize]).unwrap();
+        let target_user = {
+            let order = try!(book.get_order(msg.order_id)
+                             .ok_or("nonexistent order id".to_string()));
+            order.user
+        };
 
-        if order.user != msg.user {
-            return Err(format!("order {} does not belong to user {}", order.id, msg.user));
+        if target_user != msg.user {
+            return Err(format!("order {} does not belong to user {}", msg.order_id, msg.user));
         }
 
-        println!("canceling order {}", msg.order_id);
+        self.matcher.cancel_order(&mut book, msg.order_id);
         Ok(())
     }
 

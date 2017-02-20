@@ -121,12 +121,21 @@ impl<TCmp> BookSide<TCmp> where TCmp: OrderComparer {
     fn get_order(&self, order: OrderId) -> Option<&Order> {
         self.lookup.get(&order).map(|h| self.orders.get(h.clone()))
     }
+
+    fn remove_order(&mut self, order: OrderId) {
+        if let Some(h) = self.lookup.remove(&order) {
+            self.orders.remove(h);
+        }
+    }
 }
 
 impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
         where TCmp: Debug + OrderComparer {
     fn add_order(&mut self, new_order: Order) -> heap::HeapHandle {
+        let order_id = new_order.id;
         let handle = self.orders.insert(new_order).unwrap();
+
+        self.lookup.insert(order_id, handle.clone());
 
         handle
     }
@@ -158,8 +167,13 @@ impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
                 order.quantity -= quantity;
             });
 
-            if self.orders.get(handle).quantity == 0 {
-                self.orders.remove(handle);
+            let (rem_quantity, match_id) = {
+                let book_order = self.orders.get(handle);
+                (book_order.quantity, book_order.id)
+            };
+
+            if rem_quantity == 0 {
+                self.remove_order(match_id);
             }
 
             if new_order.quantity == 0 {
@@ -221,8 +235,8 @@ impl OrderBook {
 }
 
 pub trait OrderMatcher: Send {
-    fn add_order<T: ExecutionHandler>(&mut self, book: &mut OrderBook,
-                                      order: Order, handler: &T);
+    fn add_order<T: ExecutionHandler>(&mut self, book: &mut OrderBook, order: Order, handler: &T);
+    fn cancel_order(&mut self, &mut OrderBook, order: OrderId);
 }
 
 #[derive(Clone)]
@@ -250,6 +264,13 @@ impl OrderMatcher for BasicMatcher {
             };
 
             book.add_order(o);
+        }
+    }
+
+    fn cancel_order(&mut self, book: &mut OrderBook, order: OrderId) {
+        match order.side() {
+            OrderSide::Buy => book.buys.remove_order(order),
+            OrderSide::Sell => book.sells.remove_order(order)
         }
     }
 }
