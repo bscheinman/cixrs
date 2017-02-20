@@ -1,8 +1,8 @@
 @0xeba049cb7c053dd8;
 
 struct Order {
-    id          @0 :Uuid;
-    user        @1 :Uuid;
+    id          @0 :UInt64;
+    user        @1 :UInt64;
     symbol      @2 :Text;
     side        @3 :OrderSide;
     price       @4 :Float64;
@@ -11,9 +11,9 @@ struct Order {
 }
 
 struct UserExecution {
-    id          @0 :Uuid;
+    id          @0 :UInt64;
     ts          @1 :Timestamp;
-    order       @2 :Uuid;
+    order       @2 :UInt64;
     side        @3 :OrderSide;
     symbol      @4 :Text;
     price       @5 :Float64;
@@ -21,10 +21,10 @@ struct UserExecution {
 }
 
 struct Execution {
-    id          @0 :Uuid;
+    id          @0 :UInt64;
     ts          @1 :Timestamp;
-    buyer       @2 :Uuid;
-    seller      @3 :Uuid;
+    buyer       @2 :UInt64;
+    seller      @3 :UInt64;
     symbol      @4 :Text;
     price       @5 :Float64;
     quantity    @6 :UInt32;
@@ -64,17 +64,22 @@ struct NewOrder {
 }
 
 struct ChangeOrder {
-    id          @0 :Uuid;
+    id          @0 :UInt64;
     price       @1 :Float64;
     quantity    @2 :UInt32;
 }
 
+struct CancelOrder {
+    id          @0 :UInt64;
+}
+
 interface TradingSession {
     authenticate @0 (user :Uuid) -> (response :AuthCode);
-    newOrder @1 (order :NewOrder) -> (code :ErrorCode, id :Uuid);
+    newOrder @1 (order :NewOrder) -> (code :ErrorCode, id :UInt64);
     executionSubscribe @2 (feed :ExecutionFeed)
         -> (code :ErrorCode, sub :ExecutionFeedSubscription);
-    #changeOrder @2 (change :ChangeOrder) -> (response :Bool);
+    #changeOrder @3 (change :ChangeOrder) -> (response :Bool);
+    #cancelOrder @4 (cancel :CancelOrder) -> (response :Bool);
 }
 
 interface ExecutionFeedSubscription {}

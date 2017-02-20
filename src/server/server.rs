@@ -19,7 +19,11 @@ use libcix::book::{BasicMatcher, ExecutionHandler};
 use libcix::cix_capnp as cp;
 use libcix::order::trade_types;
 use session::{OrderRouter, OrderRoutingInfo, ServerContext};
+use std::cell::Cell;
+use std::collections::HashMap;
+use std::iter::repeat;
 use std::net::ToSocketAddrs;
+use std::rc::Rc;
 use tokio_core::reactor;
 use tokio_core::io::Io;
 use tokio_core::net::TcpListener;
@@ -44,31 +48,85 @@ impl ExecutionHandler for FeedExecutionHandler {
     }
 }
 
+type SymbolId = usize;
+
+struct SymbolLookup {
+    symbols: Vec<trade_types::Symbol>,
+    lookup: HashMap<trade_types::Symbol, SymbolId>
+}
+
+impl SymbolLookup {
+    pub fn new(symbols: &Vec<trade_types::Symbol>) -> Result<Self, String> {
+        let mut res = SymbolLookup {
+            symbols: symbols.to_vec(),
+            lookup: HashMap::new()
+        };
+
+        for (i, symbol) in symbols.iter().enumerate() {
+            if let Some(_) = res.lookup.insert(symbol.clone(), i) {
+                return Err(format!("duplicate symbol {}", symbol));
+            }
+        }
+
+        Ok(res)
+    }
+
+    pub fn get_symbol(&self, id: SymbolId) -> Result<trade_types::Symbol, ()> {
+        if id >= self.symbols.len() {
+            Err(())
+        } else {
+            Ok(self.symbols[id])
+        }
+    }
+
+    pub fn get_symbol_id(&self, symbol: &trade_types::Symbol) -> Result<SymbolId, ()> {
+        match self.lookup.get(symbol) {
+            Some(s) => Ok(*s),
+            None => Err(())
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.symbols.len()
+    }
+}
+
 // XXX: For now just use a single engine for all symbols
 // Later on we can either shard by symbol or use a lookup or whatever
 #[derive(Clone)]
 struct SingleRouter {
-    tx: mpsc::Sender<EngineMessage>
+    symbols: Rc<SymbolLookup>,
+    tx: mpsc::Sender<EngineMessage>,
+    seq_list: Vec<Cell<u64>>
 }
 
 impl SingleRouter {
-    pub fn new(tx: mpsc::Sender<EngineMessage>) -> Self {
+    pub fn new(symbols: Rc<SymbolLookup>, tx: mpsc::Sender<EngineMessage>) -> Self {
+        let len = symbols.len();
         SingleRouter {
-            tx: tx
+            symbols: symbols,
+            tx: tx,
+            seq_list: repeat(Cell::new(0u64)).take(len).collect()
         }
     }
 }
 
 impl OrderRouter for SingleRouter {
-    fn route_order(&self, o: &OrderRoutingInfo, msg: EngineMessage) ->
-        Result<(), String> {
+    fn route_order(&self, o: &OrderRoutingInfo, msg: EngineMessage) -> Result<(), String> {
         self.tx.clone().send(msg).wait();
         Ok(())
     }
 
-    fn create_order_id(&self, o: &OrderRoutingInfo) ->
-            trade_types::OrderId {
-        trade_types::OrderId::new_v4()
+    fn create_order_id(&self, o: &OrderRoutingInfo) -> Result<trade_types::OrderId, String> {
+        let sym_id = try!(self.symbols.get_symbol_id(&o.symbol).map_err(|_| {
+            format!("invalid symbol {}", o.symbol)
+        }));
+        let ref seq = self.seq_list[sym_id];
+        let order_id = try!(trade_types::OrderId::new(sym_id as u32, o.side, seq.get()));
+
+        // This is only accessed from the main thread so non-atomic updates like this are fine
+        seq.set(seq.get() + 1);
+        Ok(order_id)
     }
 }
 
@@ -120,21 +178,13 @@ impl<R> ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
             builder.set_symbol(execution.symbol.as_str());
             builder.set_price(execution.price);
             builder.set_quantity(execution.quantity);
+            builder.set_id(execution.id.raw());
+            builder.set_order(order.raw());
 
             {
                 let mut ts_builder = try!(builder.borrow().get_ts().map_err(|_| ()));
                 ts_builder.set_seconds(execution.ts.sec);
                 ts_builder.set_nanos(execution.ts.nsec);
-            }
-
-            {
-                let mut id_builder = try!(builder.borrow().get_id().map_err(|_| ()));
-                id_builder.set_bytes(execution.id.as_bytes());
-            }
-
-            {
-                let mut order_builder = try!(builder.borrow().get_order().map_err(|_| ()));
-                order_builder.set_bytes(order.as_bytes());
             }
         }
 
@@ -153,15 +203,16 @@ fn main() {
     let mut core = reactor::Core::new().unwrap();
     let handle = core.handle();
 
-    let symbols = vec!["GOOG"].into_iter().map(|x| {
+    let symbols = vec!["AAPL", "FB", "GOOG"].into_iter().map(|x| {
         trade_types::Symbol::from_str(x).unwrap()
     }).collect();
     let matcher = BasicMatcher{};
     let (exec_tx, exec_rx) = mpsc::channel(1024 as usize);
     let handler = FeedExecutionHandler{ tx: exec_tx.clone() };
-    let engine = EngineHandle::new(symbols, matcher, handler).unwrap();
-    let router = SingleRouter::new(engine.tx.clone());
+    let engine = EngineHandle::new(&symbols, matcher, handler).unwrap();
 
+    let sym_context = Rc::new(SymbolLookup::new(&symbols).unwrap());
+    let router = SingleRouter::new(sym_context, engine.tx.clone());
     let context = ServerContext::new(handle.clone(), router);
     let publisher = ExecutionPublisher::new(exec_rx, context.clone());
     publisher.handle_executions();

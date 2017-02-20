@@ -1,16 +1,16 @@
-use std::cmp::{min, Ordering};
-use std::fmt::Debug;
-use std::collections::HashMap;
-
-use order::trade_types::*;
 use heap;
+use order::trade_types::*;
+use std::cell::Cell;
+use std::cmp::{min, Ordering};
+use std::collections::HashMap;
+use std::fmt::Debug;
+use std::rc::Rc;
 use time;
-use uuid::Uuid;
 
 trait OrderComparer: heap::Comparer<Order> {
     fn does_cross(new_order: &Order, book_order: &Order) -> bool;
-    fn create_execution(new_order: &Order, book_order: &Order,
-                        quantity: Quantity) -> Execution;
+    fn create_execution(id: ExecutionId, new_order: &Order, book_order: &Order, quantity: Quantity)
+        -> Execution;
 }
 
 #[derive(Debug)]
@@ -24,12 +24,12 @@ impl OrderComparer for BuyComparer {
         book_order.price >= new_order.price
     }
 
-    fn create_execution(new_order: &Order, book_order: &Order,
-                        quantity: Quantity) -> Execution {
+    fn create_execution(id: ExecutionId, new_order: &Order, book_order: &Order, quantity: Quantity)
+            -> Execution {
         Execution {
             symbol:     book_order.symbol,
             ts:         time::now().to_timespec(),
-            id:         Uuid::new_v4(), 
+            id:         id, 
             buy_user:   book_order.user,
             buy_order:  book_order.id,
             sell_user:  new_order.user,
@@ -61,12 +61,12 @@ impl OrderComparer for SellComparer {
         book_order.price <= new_order.price
     }
 
-    fn create_execution(new_order: &Order, book_order: &Order,
-                        quantity: Quantity) -> Execution {
+    fn create_execution(id: ExecutionId, new_order: &Order, book_order: &Order, quantity: Quantity)
+            -> Execution {
         Execution {
             symbol:     book_order.symbol,
             ts:         time::now().to_timespec(),
-            id:         Uuid::new_v4(), 
+            id:         id,
             buy_user:   new_order.user,
             buy_order:  new_order.id,
             sell_user:  book_order.user,
@@ -100,7 +100,8 @@ trait OrderProcessor<THandle> {
 }
 
 struct BookSide<TCmp> where TCmp: OrderComparer {
-    orders: heap::TreeHeap<Order, TCmp>
+    orders: heap::TreeHeap<Order, TCmp>,
+    id_gen: Rc<ExecutionIdGenerator>
 }
 
 pub trait ExecutionHandler: Send {
@@ -108,9 +109,10 @@ pub trait ExecutionHandler: Send {
 }
 
 impl<TCmp> BookSide<TCmp> where TCmp: OrderComparer {
-    fn new() -> BookSide<TCmp> {
+    fn new(id_gen: Rc<ExecutionIdGenerator>) -> BookSide<TCmp> {
         BookSide {
-            orders: heap::TreeHeap::new(4)
+            orders: heap::TreeHeap::new(1024),
+            id_gen: id_gen
         }
     }
 }
@@ -138,7 +140,8 @@ impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
 
                 assert_ne!(cross_quantity, 0);
 
-                TCmp::create_execution(&new_order, book_order, cross_quantity)
+                let exec_id = self.id_gen.next_id();
+                TCmp::create_execution(exec_id, &new_order, book_order, cross_quantity)
             };
             let quantity = ex.quantity;
 
@@ -160,18 +163,41 @@ impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
     }
 }
 
+pub struct ExecutionIdGenerator {
+    symbol_id: u32,
+    seq: Cell<u64>
+}
+
+impl ExecutionIdGenerator {
+    pub fn new(symbol_id: u32) -> Self {
+        ExecutionIdGenerator {
+            symbol_id: symbol_id,
+            seq: Cell::new(0u64)
+        }
+    }
+
+    pub fn next_id(&self) -> ExecutionId {
+        let id = ExecutionId::new(self.symbol_id, self.seq.get()).unwrap();
+        self.seq.set(self.seq.get() + 1);
+        id
+    }
+}
+
 pub struct OrderBook {
     symbol:     Symbol,
+    id_gen:     Rc<ExecutionIdGenerator>,
     buys:       BookSide<BuyComparer>,
     sells:      BookSide<SellComparer>
 }
 
 impl OrderBook {
-    pub fn new(symbol: Symbol) -> OrderBook {
+    pub fn new(symbol: Symbol, symbol_id: u32) -> OrderBook {
+        let id_gen = Rc::new(ExecutionIdGenerator::new(symbol_id));
         OrderBook {
             symbol:     symbol,
-            buys:       BookSide::<BuyComparer>::new(),
-            sells:      BookSide::<SellComparer>::new()
+            id_gen:     id_gen.clone(),
+            buys:       BookSide::<BuyComparer>::new(id_gen.clone()),
+            sells:      BookSide::<SellComparer>::new(id_gen.clone())
         }
     }
 

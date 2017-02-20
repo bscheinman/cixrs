@@ -25,11 +25,11 @@ impl cp::execution_feed::Server for ExecutionFeedImpl {
                  results: cp::execution_feed::ExecutionResults)
                  -> Promise<(), capnp::Error> {
         let execution = params.get().unwrap().get_execution().unwrap();
-        let exec_id = Uuid::from_bytes(execution.get_id().unwrap().get_bytes().unwrap()).unwrap();
         let symbol = read_symbol(execution.get_symbol().unwrap()).unwrap();
 
         println!("received execution {}: {} {} shares of {} @ {}",
-                 exec_id, match execution.get_side().unwrap() {
+                 execution.get_id(),
+                 match execution.get_side().unwrap() {
                     cp::OrderSide::Buy => "bought",
                     cp::OrderSide::Sell => "sold"
                  }, execution.get_quantity(), symbol, execution.get_price());
@@ -72,10 +72,7 @@ fn process_line(core: &mut reactor::Core, cli: &trading_session::Client,
 
     match response_data.get_code().unwrap() {
         cp::ErrorCode::Ok => {
-            let order_id =
-                Uuid::from_bytes(response_data.get_id().unwrap().get_bytes()
-                                 .unwrap()).unwrap();
-            println!("order accepted with ID {}", order_id);
+            println!("order accepted with ID {}", response_data.get_id());
         },
         cp::ErrorCode::NotAuthenticated => {
             println!("order rejected because user not signed in");

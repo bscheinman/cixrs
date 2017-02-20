@@ -13,11 +13,205 @@ pub mod trade_types {
     pub const SYMBOL_MAX_LENGTH: usize = 8;
 
     pub type UserId = uuid::Uuid;
-    pub type OrderId = uuid::Uuid;
-    pub type ExecutionId = uuid::Uuid;
     pub type Price = f64;
     pub type Quantity = u32;
     pub type OrderTime = time::Timespec;
+
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct TradingId {
+        val: u64
+    }
+
+    // XXX: There has to be some package that wraps this all up nicely
+    const SYMBOL_BITS:              usize = 20;
+    const SYMBOL_MAX:               u32 = (1u32 << SYMBOL_BITS) - 1;
+
+    const METADATA_BITS:            usize = 4;
+    const METADATA_MAX:             u8 = (1u8 << METADATA_BITS) - 1;
+
+    const SEQUENCE_BITS:            usize = 40;
+    const SEQUENCE_MAX:             u64 = (1u64 << SEQUENCE_BITS) - 1;
+
+    //static_assert!(SYMBOL_BITS + METADATA_BITS + SEQUENCE_BITS == 64);
+
+    const SEQUENCE_OFFSET:          usize = 0;
+    const METADATA_OFFSET:          usize = SEQUENCE_OFFSET + SEQUENCE_BITS;
+    const SYMBOL_OFFSET:            usize = METADATA_OFFSET + METADATA_BITS;
+
+    const TRADING_MD_TYPE_MASK:     u8 = 1u8;
+    const TRADING_MD_TYPE_ORDER:    u8 = 0u8;
+    const TRADING_MD_TYPE_EXEC:     u8 = 1u8;
+
+    const ORDER_MD_SIDE_MASK:       u8 = 2u8;
+    const ORDER_MD_SIDE_BUY:        u8 = 2u8;
+    const ORDER_MD_SIDE_SELL:       u8 = 0u8;
+
+    // IDs are represented as 64-bit values with the following structure:
+    // [====Symbol ID====][====metadata===][========sequence #=============]
+    //       20 bits            4 bits               40 bits
+    // However, clients should treat these as opaque values whose structure
+    // is subject to change in the future.
+    // The least significant metadata bit is 0 for orders and 1 for executions.
+    // The second least significant metadata bit is 1 for buy and 0 for sell on orders and is
+    // unused on executions.
+    // The two remaining metadata bits are reserved for future use>
+    impl TradingId {
+        pub fn new(symbol_id: u32, metadata: u8, seq: u64) -> Result<Self, String> {
+            if symbol_id > SYMBOL_MAX {
+                return Err("symbol ID too high".to_string());
+            }
+
+            if metadata > METADATA_MAX {
+                return Err("metadata value too high".to_string());
+            }
+
+            if seq > SEQUENCE_MAX {
+                return Err("sequence number too high".to_string());
+            }
+
+            let val =
+                ((seq as u64)       << SEQUENCE_OFFSET) |
+                ((metadata as u64)  << METADATA_OFFSET) |
+                ((symbol_id as u64) << SYMBOL_OFFSET);
+
+            Ok(TradingId {
+                val: val
+            })
+        }
+
+        pub fn from_raw(raw: u64) -> Self {
+            TradingId {
+                val: raw
+            }
+        }
+
+        pub fn raw(&self) -> u64 {
+            self.val
+        }
+
+        pub fn symbol_id(&self) -> u32 {
+            ((self.val >> SYMBOL_OFFSET) & (SYMBOL_MAX as u64)) as u32
+        }
+
+        pub fn metadata(&self) -> u8 {
+            ((self.val >> METADATA_OFFSET) & (METADATA_MAX as u64)) as u8
+        }
+
+        pub fn sequence(&self) -> u64 {
+            ((self.val >> SEQUENCE_OFFSET) & (SEQUENCE_MAX as u64)) as u64
+        }
+    }
+
+    impl fmt::Display for TradingId {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "{}", self.val)
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct OrderId {
+        id: TradingId
+    }
+
+    impl OrderId  {
+        pub fn new(symbol_id: u32, side: OrderSide, seq: u64) -> Result<Self, String> {
+            let md = TRADING_MD_TYPE_ORDER | match side {
+                OrderSide::Buy => ORDER_MD_SIDE_BUY,
+                OrderSide::Sell => ORDER_MD_SIDE_SELL
+            };
+
+            Ok(OrderId {
+                id: try!(TradingId::new(symbol_id, md, seq))
+            })
+        }
+
+        pub fn from_raw(raw: u64) -> Result<Self, String> {
+            let id = TradingId::from_raw(raw);
+            if (id.metadata() & TRADING_MD_TYPE_MASK) != TRADING_MD_TYPE_ORDER {
+                return Err("id does not represent order".to_string());
+            }
+
+            Ok(OrderId {
+                id: id
+            })
+        }
+
+        pub fn raw(&self) -> u64 {
+            self.id.raw()
+        }
+
+        pub fn symbol_id(&self) -> u32 {
+            self.id.symbol_id()
+        }
+
+        pub fn side(&self) -> OrderSide {
+            match self.id.metadata() & ORDER_MD_SIDE_MASK {
+                ORDER_MD_SIDE_BUY =>    OrderSide::Buy,
+                _ =>                    OrderSide::Sell
+            }
+        }
+
+        pub fn sequence(&self) -> u64 {
+            self.id.sequence()
+        }
+    }
+
+    impl Default for OrderId {
+        fn default() -> Self { Self::new(SYMBOL_MAX, OrderSide::Buy, SEQUENCE_MAX).unwrap() }
+    }
+
+    impl fmt::Display for OrderId {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "{}", self.id)
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct ExecutionId {
+        id: TradingId
+    }
+
+    impl ExecutionId {
+        pub fn new(symbol_id: u32, seq: u64) -> Result<Self, String> {
+            let md = TRADING_MD_TYPE_EXEC;
+            Ok(ExecutionId {
+                id: try!(TradingId::new(symbol_id, md, seq))
+            })
+        }
+
+        pub fn from_raw(raw: u64) -> Result<Self, String> {
+            let id = TradingId::from_raw(raw);
+            if (id.metadata() & TRADING_MD_TYPE_MASK) != TRADING_MD_TYPE_EXEC {
+                return Err("id does not represent execution".to_string());
+            }
+
+            Ok(ExecutionId {
+                id: id
+            })
+        }
+
+        pub fn raw(&self) -> u64 {
+            self.id.raw()
+        }
+
+        pub fn symbol_id(&self) -> u32 {
+            self.id.symbol_id()
+        }
+
+        pub fn sequence(&self) -> u64 {
+            self.id.sequence()
+        }
+    }
+
+    impl Default for ExecutionId {
+        fn default() -> Self { Self::new(SYMBOL_MAX, SEQUENCE_MAX).unwrap() }
+    }
+
+    impl fmt::Display for ExecutionId {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "{}", self.id)
+        }
+    }
 
     // XXX: These dervied traits rely on the assumption that all bytes after the
     // initial NUL byte will also be NUL, but we can maintain that invariant
@@ -60,6 +254,10 @@ pub mod trade_types {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             write!(f, "{}", self.as_str())
         }
+    }
+
+    impl Default for Symbol {
+        fn default() -> Self { Self::from_str("").unwrap() }
     }
 
     #[derive(Debug)]
@@ -146,12 +344,12 @@ pub mod trade_types {
     impl Default for Order {
         fn default() -> Self {
             Order {
-                id:         uuid::Uuid::default(),
-                user:       uuid::Uuid::default(),
-                symbol:     Symbol::new(),
-                side:       OrderSide::Buy,
-                price:      0f64,
-                quantity:   0u32,
+                id:         OrderId::default(),
+                user:       UserId::default(),
+                symbol:     Symbol::default(),
+                side:       OrderSide::default(),
+                price:      Price::default(),
+                quantity:   Quantity::default(),
                 update:     time::now().to_timespec()
             }
         }
@@ -170,6 +368,7 @@ pub mod trade_types {
         }
     }
 
+    /*
     impl Order {
         pub fn new(user: UserId, o: &cp::new_order::Reader) ->
                 Result<Self, Error> {
@@ -186,6 +385,7 @@ pub mod trade_types {
             })
         }
     }
+    */
 
     pub fn read_uuid(r: cp::uuid::Reader) -> Result<uuid::Uuid, Error> {
         let bytes = try!(r.get_bytes().map_err(|_| {
@@ -222,6 +422,7 @@ pub mod trade_types {
         })
     }
 
+    /*
     fn read_order(o: cp::order::Reader) -> Result<Order, Error> {
         // XXX: learn how rust macros work
         let id_bytes = try!(o.get_id());
@@ -240,6 +441,7 @@ pub mod trade_types {
             update:     read_timestamp(try!(o.get_updated()))
         })
     }
+    */
 
     pub struct Execution {
         pub id:         ExecutionId,

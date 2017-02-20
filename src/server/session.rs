@@ -14,14 +14,18 @@ use tokio_core::reactor;
 use uuid::Uuid;
 
 type SubscripionMap = HashMap<UserId, ExecutionSubscription>;
+type SymbolMap = HashMap<Symbol, u32>;
 
 // XXX: this will expose things like symbol and any other information
 // needed for routing orders, but right now we don't need any of that
-pub struct OrderRoutingInfo;
+pub struct OrderRoutingInfo {
+    pub symbol: Symbol,
+    pub side:   OrderSide
+}
 
 pub trait OrderRouter {
     fn route_order(&self, o: &OrderRoutingInfo, msg: EngineMessage) -> Result<(), String>;
-    fn create_order_id(&self, o: &OrderRoutingInfo) -> OrderId;
+    fn create_order_id(&self, o: &OrderRoutingInfo) -> Result<OrderId, String>;
 }
 
 #[derive(Clone)]
@@ -115,18 +119,24 @@ impl<R> Server for Session<R> where R: 'static + Clone + OrderRouter {
             return Promise::ok(());
         }
 
-        let order_info = OrderRoutingInfo{};
-        let order_id = self.context.router.create_order_id(&order_info);
         let order = pry!(pry!(params.get()).get_order());
         let symbol = pry!(read_symbol(pry!(order.get_symbol())).map_err(|e| {
             capnp::Error::failed("invalid symbol".to_string())
+        }));
+        let side = OrderSide::from(pry!(order.get_side()));
+        let order_info = OrderRoutingInfo{
+            symbol: symbol,
+            side: side
+        };
+        let order_id = pry!(self.context.router.create_order_id(&order_info).map_err(|e| {
+            capnp::Error::failed(e)
         }));
 
         let msg = EngineMessage::NewOrder(NewOrderMessage {
             user: self.user,
             order_id: order_id,
             symbol: symbol,
-            side: OrderSide::from(pry!(order.get_side())),
+            side: side,
             price: order.get_price(),
             quantity: order.get_quantity()
         });
@@ -136,7 +146,7 @@ impl<R> Server for Session<R> where R: 'static + Clone + OrderRouter {
         }));
         
         results.get().set_code(cp::ErrorCode::Ok);
-        pry!(results.get().get_id()).set_bytes(order_id.as_bytes());
+        results.get().set_id(order_id.raw());
         Promise::ok(())
     }
 

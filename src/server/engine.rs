@@ -16,9 +16,9 @@ const BUFFER_SIZE: usize = 1024;
 struct OrderEngine<TMatcher, THandler>
         where TMatcher: book::OrderMatcher,
               THandler: book::ExecutionHandler {
-    books: HashMap<Symbol, book::OrderBook>,
-    matcher: TMatcher,
-    handler: THandler
+    books:          HashMap<Symbol, book::OrderBook>,
+    matcher:        TMatcher,
+    handler:        THandler
 }
 
 pub struct NewOrderMessage {
@@ -30,8 +30,22 @@ pub struct NewOrderMessage {
     pub quantity:   Quantity
 }
 
+pub struct ChangeOrderMessage {
+    pub user:       UserId,
+    pub order_id:   OrderId,
+    pub price:      Price,
+    pub quantity:   Quantity
+}
+
+pub struct CancelOrderMessage {
+    pub user:       UserId,
+    pub order_id:   OrderId
+}
+
 pub enum EngineMessage {
     NewOrder(NewOrderMessage),
+    //ChangeOrder(ChangeOrderMessage),
+    //CancelOrder(CancelOrderMessage)
 }
 
 pub struct EngineHandle {
@@ -41,16 +55,17 @@ pub struct EngineHandle {
 }
 
 impl EngineHandle {
-    pub fn new<TMatcher, THandler> (symbols: Vec<Symbol>, matcher: TMatcher,
+    pub fn new<TMatcher, THandler> (symbols: &Vec<Symbol>, matcher: TMatcher,
                                     handler: THandler) -> Result<Self, String>
             where TMatcher: 'static + book::OrderMatcher + Clone,
                   THandler: 'static + book::ExecutionHandler + Clone {
         let (channel_tx, channel_rx) = oneshot::channel();
+        let s_clone = symbols.clone();
         let m_clone = matcher.clone();
         let h_clone = handler.clone();
 
         thread::spawn(move || -> Result<(), String> {
-            let mut engine = OrderEngine::new(symbols, m_clone, h_clone)
+            let mut engine = OrderEngine::new(s_clone, m_clone, h_clone)
                 .unwrap_or_else(|e| {
                     panic!("failed to create order engine: {}", e)
                 });
@@ -88,9 +103,13 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
             handler: handler
         };
 
-        for symbol in symbols {
-            if let Some(_) =
-                    engine.books.insert(symbol, book::OrderBook::new(symbol)) {
+        // XXX: This is fine for now because we're only using one engine, but once we start
+        // sharding symbols across engines, we won't be able to rely on the assumption that symbol
+        // ids are sequential and zero-indexed.  The `symbols` argument here should then change to
+        // a vector of (symbol, id) tuples
+        for (i, symbol) in symbols.iter().enumerate() {
+            if let Some(_) = engine.books.insert(symbol.clone(),
+                                 book::OrderBook::new(symbol.clone(), i as u32)) {
                 return Err(format!("duplicate symbol {}", symbol.as_str()));
             }
         }
@@ -98,7 +117,6 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
         Ok(engine)
     }
 
-    // XXX: send back result to calling thread
     fn new_order(&mut self, msg: NewOrderMessage) -> Result<(), String> {
         let order = Order {
             id:         msg.order_id,
@@ -116,12 +134,22 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
         Ok(())
     }
 
+    /*
+    fn change_order(&mut self, msg: ChangeOrderMessage) -> Result<(), String> {
+
+    }
+
+    fn cancel_order(&mut self, msg: ChangeOrderMessage) -> Result<(), String> {
+
+    }
+    */
+
     pub fn process_message(&mut self, message: EngineMessage) ->
             Result<(), String> {
         match message {
-            EngineMessage::NewOrder(msg) => {
-               self.new_order(msg)
-            },
+            EngineMessage::NewOrder(msg) => self.new_order(msg),
+            //EngineMessage::ChangeOrderMessage(msg) => self.change_order(msg),
+            //EngineMessage::CancelOrderMessage(msg) => self.cancel_order(msg)
         }
     }
 }
