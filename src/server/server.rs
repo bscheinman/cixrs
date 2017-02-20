@@ -113,6 +113,10 @@ impl<R> ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
         let mut msg = subscription.client.execution_request();
         {
             let mut builder = try!(msg.get().get_execution().map_err(|_| ()));
+            builder.set_side(match side {
+                trade_types::OrderSide::Buy => cp::OrderSide::Buy,
+                trade_types::OrderSide::Sell => cp::OrderSide::Sell
+            });
             builder.set_symbol(execution.symbol.as_str());
             builder.set_price(execution.price);
             builder.set_quantity(execution.quantity);

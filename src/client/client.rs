@@ -6,6 +6,7 @@ extern crate libcix;
 extern crate tokio_core;
 extern crate uuid;
 
+use capnp::capability::Promise;
 use capnp_rpc as rpc;
 use futures::Future;
 use libcix::cix_capnp as cp;
@@ -17,6 +18,25 @@ use tokio_core::reactor;
 use tokio_core::io::Io;
 use tokio_core::net::TcpStream;
 use uuid::Uuid;
+
+struct ExecutionFeedImpl;
+impl cp::execution_feed::Server for ExecutionFeedImpl {
+    fn execution(&mut self, params: cp::execution_feed::ExecutionParams,
+                 results: cp::execution_feed::ExecutionResults)
+                 -> Promise<(), capnp::Error> {
+        let execution = params.get().unwrap().get_execution().unwrap();
+        let exec_id = Uuid::from_bytes(execution.get_id().unwrap().get_bytes().unwrap()).unwrap();
+        let symbol = read_symbol(execution.get_symbol().unwrap()).unwrap();
+
+        println!("received execution {}: {} {} shares of {} @ {}",
+                 exec_id, match execution.get_side().unwrap() {
+                    cp::OrderSide::Buy => "bought",
+                    cp::OrderSide::Sell => "sold"
+                 }, execution.get_quantity(), symbol, execution.get_price());
+
+        Promise::ok(())
+    }
+}
 
 fn process_line(core: &mut reactor::Core, cli: &trading_session::Client,
                 line: &String) {
@@ -98,6 +118,13 @@ fn main() {
         }
     }
 
+    let exec_feed = cp::execution_feed::ToClient::new(ExecutionFeedImpl)
+        .from_server::<::capnp_rpc::Server>();
+    let mut feed_req = cli.execution_subscribe_request();
+    feed_req.get().set_feed(exec_feed);
+
+    let feed = core.run(feed_req.send().promise).unwrap();
+
     let stdin = io::stdin();
     let mut line = String::new();
 
@@ -106,4 +133,6 @@ fn main() {
         process_line(&mut core, &cli, &line);
         line.clear();
     }
+
+    loop{}
 }

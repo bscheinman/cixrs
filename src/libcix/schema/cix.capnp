@@ -14,9 +14,10 @@ struct UserExecution {
     id          @0 :Uuid;
     ts          @1 :Timestamp;
     order       @2 :Uuid;
-    symbol      @3 :Text;
-    price       @4 :Float64;
-    quantity    @5 :UInt32;
+    side        @3 :OrderSide;
+    symbol      @4 :Text;
+    price       @5 :Float64;
+    quantity    @6 :UInt32;
 }
 
 struct Execution {
