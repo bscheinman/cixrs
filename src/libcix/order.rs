@@ -368,25 +368,6 @@ pub mod trade_types {
         }
     }
 
-    /*
-    impl Order {
-        pub fn new(user: UserId, o: &cp::new_order::Reader) ->
-                Result<Self, Error> {
-            let symbol = try!(read_symbol(try!(o.get_symbol())));
-
-            Ok(Order {
-                id: uuid::Uuid::new_v4(),
-                user: user.clone(),
-                symbol: symbol.clone(),
-                side: OrderSide::from(try!(o.get_side())),
-                price: o.get_price(),
-                quantity: o.get_quantity(),
-                update: time::now().to_timespec()
-            })
-        }
-    }
-    */
-
     pub fn read_uuid(r: cp::uuid::Reader) -> Result<uuid::Uuid, Error> {
         let bytes = try!(r.get_bytes().map_err(|_| {
             Error::new(ErrorCode::Other, "missing bytes".to_string())
@@ -421,27 +402,6 @@ pub mod trade_types {
             Error::new(ErrorCode::Other, "invalid symbol".to_string())
         })
     }
-
-    /*
-    fn read_order(o: cp::order::Reader) -> Result<Order, Error> {
-        // XXX: learn how rust macros work
-        let id_bytes = try!(o.get_id());
-        let id_uuid = try!(read_uuid(id_bytes));
-        let user_bytes = try!(o.get_user());
-        let user_uuid = try!(read_uuid(user_bytes));
-        let sym_str = try!(o.get_symbol());
-
-        Ok(Order {
-            id:         id_uuid,
-            user:       user_uuid,
-            symbol:     try!(read_symbol(sym_str)),
-            side:       OrderSide::from(try!(o.get_side())),
-            price:      o.get_price(),
-            quantity:   o.get_quantity(),
-            update:     read_timestamp(try!(o.get_updated()))
-        })
-    }
-    */
 
     pub struct Execution {
         pub id:         ExecutionId,
