@@ -1,6 +1,6 @@
 use capnp;
 use capnp::capability::Promise;
-use engine::{EngineMessage, NewOrderMessage};
+use engine::*;
 use futures::{future, Future, Stream};
 use futures::sink::Sink;
 use futures::sync::mpsc;
@@ -18,9 +18,9 @@ type SymbolMap = HashMap<Symbol, u32>;
 
 // XXX: this will expose things like symbol and any other information
 // needed for routing orders, but right now we don't need any of that
-pub struct OrderRoutingInfo {
-    pub symbol: Symbol,
-    pub side:   OrderSide
+pub enum OrderRoutingInfo {
+    NewOrderInfo    { symbol: Symbol, side: OrderSide },
+    ModifyOrderInfo { symbol_id: u32 }
 }
 
 pub trait OrderRouter {
@@ -124,7 +124,7 @@ impl<R> Server for Session<R> where R: 'static + Clone + OrderRouter {
             capnp::Error::failed("invalid symbol".to_string())
         }));
         let side = OrderSide::from(pry!(order.get_side()));
-        let order_info = OrderRoutingInfo{
+        let order_info = OrderRoutingInfo::NewOrderInfo {
             symbol: symbol,
             side: side
         };
@@ -142,11 +142,41 @@ impl<R> Server for Session<R> where R: 'static + Clone + OrderRouter {
         });
 
         let send = pry!(self.context.router.route_order(&order_info, msg).map_err(|e| {
-            capnp::Error::failed(format!("internal error {}", e))
+            capnp::Error::failed("internal error".to_string())
         }));
         
         results.get().set_code(cp::ErrorCode::Ok);
         results.get().set_id(order_id.raw());
+        Promise::ok(())
+    }
+
+    fn cancel_order(&mut self, params: CancelOrderParams, mut results: CancelOrderResults)
+                    -> Promise<(), capnp::Error> {
+        if !self.authenticated {
+            results.get().set_code(cp::ErrorCode::NotAuthenticated);
+            return Promise::ok(());
+        }
+
+        let raw_order_id = pry!(pry!(params.get()).get_cancel()).get_id();
+        let order_id = match OrderId::from_raw(raw_order_id) {
+            Ok(id) => id,
+            Err(_) => {
+                results.get().set_code(cp::ErrorCode::InvalidArgs);
+                return Promise::ok(());
+            }
+        };
+
+        let msg = EngineMessage::CancelOrder(CancelOrderMessage {
+            user:       self.user,
+            order_id:   order_id
+        });
+        let order_info = OrderRoutingInfo::ModifyOrderInfo { symbol_id: order_id.symbol_id() };
+
+        let send = pry!(self.context.router.route_order(&order_info, msg).map_err(|e| {
+            capnp::Error::failed("internal error".to_string())
+        }));
+
+        results.get().set_code(cp::ErrorCode::Ok);
         Promise::ok(())
     }
 

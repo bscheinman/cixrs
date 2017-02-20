@@ -118,15 +118,19 @@ impl OrderRouter for SingleRouter {
     }
 
     fn create_order_id(&self, o: &OrderRoutingInfo) -> Result<trade_types::OrderId, String> {
-        let sym_id = try!(self.symbols.get_symbol_id(&o.symbol).map_err(|_| {
-            format!("invalid symbol {}", o.symbol)
-        }));
-        let ref seq = self.seq_list[sym_id];
-        let order_id = try!(trade_types::OrderId::new(sym_id as u32, o.side, seq.get()));
+        if let OrderRoutingInfo::NewOrderInfo { symbol: ref symbol, side: side } = *o {
+            let sym_id = try!(self.symbols.get_symbol_id(symbol).map_err(|_| {
+                format!("invalid symbol {}", symbol)
+            }));
+            let ref seq = self.seq_list[sym_id];
+            let order_id = try!(trade_types::OrderId::new(sym_id as u32, side, seq.get()));
 
-        // This is only accessed from the main thread so non-atomic updates like this are fine
-        seq.set(seq.get() + 1);
-        Ok(order_id)
+            // This is only accessed from the main thread so non-atomic updates like this are fine
+            seq.set(seq.get() + 1);
+            Ok(order_id)
+        } else {
+            unreachable!()
+        }
     }
 }
 

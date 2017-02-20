@@ -49,6 +49,7 @@ enum ErrorCode {
     ok @0;
     notAuthenticated @1;
     alreadySubscribed @2;
+    invalidArgs @3;
 }
 
 enum AuthCode {
@@ -78,8 +79,8 @@ interface TradingSession {
     newOrder @1 (order :NewOrder) -> (code :ErrorCode, id :UInt64);
     executionSubscribe @2 (feed :ExecutionFeed)
         -> (code :ErrorCode, sub :ExecutionFeedSubscription);
-    #changeOrder @3 (change :ChangeOrder) -> (response :Bool);
-    #cancelOrder @4 (cancel :CancelOrder) -> (response :Bool);
+    cancelOrder @3 (cancel :CancelOrder) -> (code :ErrorCode);
+    #changeOrder @4 (change :ChangeOrder) -> (code :ErrorCode);
 }
 
 interface ExecutionFeedSubscription {}

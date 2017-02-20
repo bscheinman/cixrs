@@ -101,6 +101,7 @@ trait OrderProcessor<THandle> {
 
 struct BookSide<TCmp> where TCmp: OrderComparer {
     orders: heap::TreeHeap<Order, TCmp>,
+    lookup: HashMap<OrderId, heap::HeapHandle>,
     id_gen: Rc<ExecutionIdGenerator>
 }
 
@@ -112,8 +113,13 @@ impl<TCmp> BookSide<TCmp> where TCmp: OrderComparer {
     fn new(id_gen: Rc<ExecutionIdGenerator>) -> BookSide<TCmp> {
         BookSide {
             orders: heap::TreeHeap::new(1024),
+            lookup: HashMap::new(),
             id_gen: id_gen
         }
+    }
+
+    fn get_order(&self, order: OrderId) -> Option<&Order> {
+        self.lookup.get(&order).map(|h| self.orders.get(h.clone()))
     }
 }
 
@@ -204,6 +210,13 @@ impl OrderBook {
     pub fn print_books(&self) {
         println!("{}", self.buys.orders);
         println!("{}", self.sells.orders);
+    }
+
+    pub fn get_order(&self, order: OrderId) -> Option<&Order> {
+        match order.side() {
+            OrderSide::Buy => self.buys.get_order(order),
+            OrderSide::Sell => self.sells.get_order(order)
+        }
     }
 }
 

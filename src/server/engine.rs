@@ -16,6 +16,7 @@ const BUFFER_SIZE: usize = 1024;
 struct OrderEngine<TMatcher, THandler>
         where TMatcher: book::OrderMatcher,
               THandler: book::ExecutionHandler {
+    symbols:        Vec<Symbol>,
     books:          HashMap<Symbol, book::OrderBook>,
     matcher:        TMatcher,
     handler:        THandler
@@ -45,7 +46,7 @@ pub struct CancelOrderMessage {
 pub enum EngineMessage {
     NewOrder(NewOrderMessage),
     //ChangeOrder(ChangeOrderMessage),
-    //CancelOrder(CancelOrderMessage)
+    CancelOrder(CancelOrderMessage)
 }
 
 pub struct EngineHandle {
@@ -77,10 +78,13 @@ impl EngineHandle {
 
             // process incoming messages on event loop
             let done = rx.for_each(|msg| {
-                engine.process_message(msg).map_err(|_| ())
+                engine.process_message(msg).map_err(|e| {
+                    println!("error processing message: {}", e);
+                })
             });
 
-            core.run(done).unwrap();
+            core.run(done);
+
             Ok(())
         });
 
@@ -98,6 +102,7 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
     pub fn new(symbols: Vec<Symbol>, matcher: TMatcher, handler: THandler) ->
             Result<OrderEngine<TMatcher, THandler>, String> {
         let mut engine = OrderEngine {
+            symbols: symbols,
             books: HashMap::new(),
             matcher: matcher,
             handler: handler
@@ -107,7 +112,7 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
         // sharding symbols across engines, we won't be able to rely on the assumption that symbol
         // ids are sequential and zero-indexed.  The `symbols` argument here should then change to
         // a vector of (symbol, id) tuples
-        for (i, symbol) in symbols.iter().enumerate() {
+        for (i, symbol) in engine.symbols.iter().enumerate() {
             if let Some(_) = engine.books.insert(symbol.clone(),
                                  book::OrderBook::new(symbol.clone(), i as u32)) {
                 return Err(format!("duplicate symbol {}", symbol.as_str()));
@@ -138,18 +143,33 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
     fn change_order(&mut self, msg: ChangeOrderMessage) -> Result<(), String> {
 
     }
-
-    fn cancel_order(&mut self, msg: ChangeOrderMessage) -> Result<(), String> {
-
-    }
     */
+
+    fn cancel_order(&mut self, msg: CancelOrderMessage) -> Result<(), String> {
+        let sym_id = msg.order_id.symbol_id();
+        if (sym_id as usize) >= self.symbols.len() {
+            return Err("invalid order id".to_string());
+        }
+
+        // XXX: really the books should be stored directly in a vector and the lookup hashmap
+        // would point into that
+        let book = self.books.get(&self.symbols[sym_id as usize]).unwrap();
+        let order = try!(book.get_order(msg.order_id).ok_or("nonexistent order id".to_string()));
+
+        if order.user != msg.user {
+            return Err(format!("order {} does not belong to user {}", order.id, msg.user));
+        }
+
+        println!("canceling order {}", msg.order_id);
+        Ok(())
+    }
 
     pub fn process_message(&mut self, message: EngineMessage) ->
             Result<(), String> {
         match message {
             EngineMessage::NewOrder(msg) => self.new_order(msg),
-            //EngineMessage::ChangeOrderMessage(msg) => self.change_order(msg),
-            //EngineMessage::CancelOrderMessage(msg) => self.cancel_order(msg)
+            //EngineMessage::ChangeOrder(msg) => self.change_order(msg),
+            EngineMessage::CancelOrder(msg) => self.cancel_order(msg)
         }
     }
 }
