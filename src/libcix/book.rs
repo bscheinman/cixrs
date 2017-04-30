@@ -107,6 +107,9 @@ struct BookSide<TCmp> where TCmp: OrderComparer {
 
 pub trait ExecutionHandler: Send {
     fn handle_match(&self, execution: Execution);
+    fn handle_market_data_l1(&self, symbol: Symbol, bid: MdEntry, ask: MdEntry);
+    //fn handle_market_data_l2(&self, symbol: Symbol, bids: Vec<MdEntry>,
+                             //asks: Vec<MdEntry>);
 }
 
 impl<TCmp> BookSide<TCmp> where TCmp: OrderComparer {
@@ -125,6 +128,16 @@ impl<TCmp> BookSide<TCmp> where TCmp: OrderComparer {
     fn remove_order(&mut self, order: OrderId) {
         if let Some(h) = self.lookup.remove(&order) {
             self.orders.remove(h);
+        }
+    }
+
+    fn top_order(&self) -> MdEntry {
+        match self.orders.peek() {
+            None => MdEntry { price: 0.0f64, quantity: 0u32 },
+            Some(h) => {
+                let order = self.orders.get(h);
+                MdEntry { price: order.price, quantity: order.quantity }
+            }
         }
     }
 }
@@ -152,6 +165,10 @@ impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
 
                 let cross_quantity = min(new_order.quantity,
                                          book_order.quantity);
+
+                if cross_quantity == 0 {
+                    println!("{}", self.orders);
+                }
 
                 assert_ne!(cross_quantity, 0);
 
@@ -205,7 +222,6 @@ impl ExecutionIdGenerator {
 
 pub struct OrderBook {
     symbol:     Symbol,
-    id_gen:     Rc<ExecutionIdGenerator>,
     buys:       BookSide<BuyComparer>,
     sells:      BookSide<SellComparer>
 }
@@ -215,7 +231,6 @@ impl OrderBook {
         let id_gen = Rc::new(ExecutionIdGenerator::new(symbol_id));
         OrderBook {
             symbol:     symbol,
-            id_gen:     id_gen.clone(),
             buys:       BookSide::<BuyComparer>::new(id_gen.clone()),
             sells:      BookSide::<SellComparer>::new(id_gen.clone())
         }
@@ -236,11 +251,20 @@ impl OrderBook {
 
 pub trait OrderMatcher: Send {
     fn add_order<T: ExecutionHandler>(&mut self, book: &mut OrderBook, order: Order, handler: &T);
-    fn cancel_order(&mut self, &mut OrderBook, order: OrderId);
+    fn cancel_order<T: ExecutionHandler>(&mut self, &mut OrderBook,
+                                         order: OrderId, handler: &T);
 }
 
 #[derive(Clone)]
 pub struct BasicMatcher;
+
+impl BasicMatcher {
+    fn publish_md<T: ExecutionHandler>(&self, book: &OrderBook, handler: &T) {
+        let top_bid = book.buys.top_order();
+        let top_ask = book.sells.top_order();
+        handler.handle_market_data_l1(book.symbol, top_bid, top_ask);
+    }
+}
 
 impl OrderMatcher for BasicMatcher {
     fn add_order<T: ExecutionHandler>(&mut self, book: &mut OrderBook,
@@ -265,12 +289,17 @@ impl OrderMatcher for BasicMatcher {
 
             book.add_order(o);
         }
+
+        self.publish_md(book, handler);
     }
 
-    fn cancel_order(&mut self, book: &mut OrderBook, order: OrderId) {
+    fn cancel_order<T: ExecutionHandler>(&mut self, book: &mut OrderBook,
+                                         order: OrderId, handler: &T) {
         match order.side() {
             OrderSide::Buy => book.buys.remove_order(order),
             OrderSide::Sell => book.sells.remove_order(order)
         }
+
+        self.publish_md(book, handler);
     }
 }

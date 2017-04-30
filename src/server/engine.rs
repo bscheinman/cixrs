@@ -164,7 +164,7 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
             return Err(format!("order {} does not belong to user {}", msg.order_id, msg.user));
         }
 
-        self.matcher.cancel_order(&mut book, msg.order_id);
+        self.matcher.cancel_order(&mut book, msg.order_id, &self.handler);
         Ok(())
     }
 

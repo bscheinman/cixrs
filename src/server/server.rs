@@ -29,22 +29,21 @@ use tokio_core::io::Io;
 use tokio_core::net::TcpListener;
 
 #[derive(Clone)]
-struct ExecutionPrinter;
-
-impl ExecutionHandler for ExecutionPrinter {
-    fn handle_match(&self, execution: trade_types::Execution) {
-        println!("{}", execution)
-    }
-}
-
-#[derive(Clone)]
 struct FeedExecutionHandler {
     tx: mpsc::Sender<trade_types::Execution>
 }
 
 impl ExecutionHandler for FeedExecutionHandler {
     fn handle_match(&self, execution: trade_types::Execution) {
+        println!("EXECUTION {}", execution);
         self.tx.clone().send(execution).wait();
+    }
+
+    fn handle_market_data_l1(&self, symbol: trade_types::Symbol,
+                             bid: trade_types::MdEntry,
+                             ask: trade_types::MdEntry) {
+        println!("{} bid {}x{}, ask {}x{}", symbol, bid.price, bid.quantity,
+                 ask.price, ask.quantity);
     }
 }
 

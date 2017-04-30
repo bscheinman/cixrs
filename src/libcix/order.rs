@@ -331,6 +331,12 @@ pub mod trade_types {
     }
 
     #[derive(Clone, Copy, Debug)]
+    pub struct MdEntry {
+        pub price:      Price,
+        pub quantity:   Quantity
+    }
+
+    #[derive(Clone, Copy, Debug)]
     pub struct Order {
         pub id:         OrderId,
         pub user:       UserId,
