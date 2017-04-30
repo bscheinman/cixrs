@@ -45,6 +45,28 @@ impl ExecutionHandler for FeedExecutionHandler {
         println!("{} bid {}x{}, ask {}x{}", symbol, bid.price, bid.quantity,
                  ask.price, ask.quantity);
     }
+
+    fn handle_market_data_l2(&self, symbol: trade_types::Symbol,
+                             bids: Vec<trade_types::MdEntry>,
+                             asks: Vec<trade_types::MdEntry>) {
+        println!("Bids:");
+        if bids.len() == 0 {
+            println!("None");
+        } else {
+            for entry in bids {
+                println!("\t{}x{}", entry.price, entry.quantity);
+            }
+        }
+
+        println!("Asks:");
+        if asks.len() == 0 {
+            println!("None");
+        } else {
+            for entry in asks {
+                println!("\t{}x{}", entry.price, entry.quantity);
+            }
+        }
+    }
 }
 
 type SymbolId = usize;

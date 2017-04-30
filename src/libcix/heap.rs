@@ -19,6 +19,17 @@ struct HeapNodeMd {
     size:           u32
 }
 
+impl Default for HeapNodeMd {
+    fn default() -> Self {
+        HeapNodeMd {
+            parent: -1,
+            left_child: -1,
+            right_child: -1,
+            size: 1
+        }
+    }
+}
+
 #[derive(Debug)]
 struct HeapNode<T> where T: Copy + Default {
     value:  T,
@@ -64,12 +75,7 @@ pub struct HeapHandle {
 
 impl HeapNodeMd {
     fn new() -> HeapNodeMd {
-        HeapNodeMd {
-            parent:         -1,
-            left_child:     -1,
-            right_child:    -1,
-            size:           1
-        }
+        Self::default()
     }
 
     fn reset(&mut self) {
@@ -125,6 +131,10 @@ impl<T, TCmp> TreeHeap<T, TCmp> where T: Copy + Default, TCmp: Comparer<T> {
 
     pub fn is_empty(&self) -> bool {
         self.root < 0
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.pool.capacity()
     }
 
     pub fn peek(&self) -> Option<HeapHandle> {
@@ -520,5 +530,71 @@ impl<T, TCmp> Display for TreeHeap<T, TCmp>
         }
 
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct HeapIteratorNode<T> where T: Copy + Default {
+    value: T,
+    md: HeapNodeMd
+}
+
+struct HeapIteratorComparator<T, TCmp>
+        where T: Copy + Default, TCmp: Comparer<T> {
+    phantom_t: PhantomData<T>,
+    phantom_tcmp: PhantomData<TCmp>
+}
+
+impl<T, TCmp> Comparer<HeapIteratorNode<T>> for HeapIteratorComparator<T, TCmp>
+        where T: Copy + Default, TCmp: Comparer<T> {
+    fn compare(x: &HeapIteratorNode<T>, y: &HeapIteratorNode<T>) -> Ordering {
+        TCmp::compare(&x.value, &y.value)
+    }
+}
+
+pub struct HeapIterator<'a, T, TCmp>
+        where T: 'a + Copy + Default, TCmp: 'a + Comparer<T> {
+    heap: &'a TreeHeap<T, TCmp>,
+    candidates: TreeHeap<HeapIteratorNode<T>, HeapIteratorComparator<T, TCmp>>
+}
+
+impl<'a, T, TCmp> HeapIterator<'a, T, TCmp>
+        where T: 'a + Copy + Default, TCmp: 'a + Comparer<T> {
+    pub fn new(heap: &'a TreeHeap<T, TCmp>) -> Self {
+        let mut result = HeapIterator {
+            heap: heap,
+            candidates: TreeHeap::new(heap.capacity())
+        };
+
+        if let Some(n) = heap.peek() {
+            result.add_candidate(heap.get_node(n.index));
+        }
+
+        result
+    }
+
+    fn add_candidate(&mut self, node: &HeapNode<T>) {
+        self.candidates.insert(HeapIteratorNode {
+            value: node.value,
+            md: node.md.get()
+        });
+    }
+
+    pub fn next(&mut self) -> Option<T> {
+        if self.candidates.is_empty() {
+            return None;
+        }
+
+        let top = self.candidates.pop();
+
+        if top.md.left_child >= 0 {
+            self.add_candidate(self.heap.get_node(top.md.left_child));
+        }
+
+        if top.md.right_child >= 0 {
+            self.add_candidate(self.heap.get_node(top.md.right_child));
+        }
+
+        Some(top.value)
     }
 }

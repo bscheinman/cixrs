@@ -17,6 +17,27 @@ impl ExecutionHandler for ExecutionPrinter {
         println!("bid {}x{}, ask {}x{}", bid.price, bid.quantity, ask.price,
                  ask.quantity)
     }
+
+    fn handle_market_data_l2(&self, symbol: Symbol, bids: Vec<MdEntry>,
+                             asks: Vec<MdEntry>) {
+        println!("Bids:");
+        if bids.len() == 0 {
+            println!("None");
+        } else {
+            for entry in bids {
+                println!("\t{}x{}", entry.price, entry.quantity);
+            }
+        }
+
+        println!("Asks:");
+        if asks.len() == 0 {
+            println!("None");
+        } else {
+            for entry in asks {
+                println!("\t{}x{}", entry.price, entry.quantity);
+            }
+        }
+    }
 }
 
 fn create_order(side: OrderSide, price: Price, quantity: Quantity,

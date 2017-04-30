@@ -108,8 +108,8 @@ struct BookSide<TCmp> where TCmp: OrderComparer {
 pub trait ExecutionHandler: Send {
     fn handle_match(&self, execution: Execution);
     fn handle_market_data_l1(&self, symbol: Symbol, bid: MdEntry, ask: MdEntry);
-    //fn handle_market_data_l2(&self, symbol: Symbol, bids: Vec<MdEntry>,
-                             //asks: Vec<MdEntry>);
+    fn handle_market_data_l2(&self, symbol: Symbol, bids: Vec<MdEntry>,
+                             asks: Vec<MdEntry>);
 }
 
 impl<TCmp> BookSide<TCmp> where TCmp: OrderComparer {
@@ -139,6 +139,37 @@ impl<TCmp> BookSide<TCmp> where TCmp: OrderComparer {
                 MdEntry { price: order.price, quantity: order.quantity }
             }
         }
+    }
+
+    fn get_l2_data(&self, depth: usize) -> Vec<MdEntry> {
+        let mut results = Vec::with_capacity(depth);
+        let mut iter = heap::HeapIterator::new(&self.orders);
+        let mut entry = MdEntry::default();
+
+        entry.price = -1.0f64;
+
+        while let Some(o) = iter.next() {
+
+            if entry.price == o.price {
+                entry.quantity += o.quantity;
+            } else {
+                if entry.price > 0.0f64 {
+                    results.push(entry);
+                }
+                entry.price = o.price;
+                entry.quantity = o.quantity;
+            }
+
+            if results.len() >= depth {
+                return results;
+            }
+        }
+
+        if entry.price > 0.0f64 {
+            results.push(entry);
+        }
+
+        results
     }
 }
 
@@ -263,6 +294,11 @@ impl BasicMatcher {
         let top_bid = book.buys.top_order();
         let top_ask = book.sells.top_order();
         handler.handle_market_data_l1(book.symbol, top_bid, top_ask);
+
+        // XXX: make depth configurable
+        let l2_bids = book.buys.get_l2_data(3);
+        let l2_asks = book.sells.get_l2_data(3);
+        handler.handle_market_data_l2(book.symbol, l2_bids, l2_asks);
     }
 }
 
