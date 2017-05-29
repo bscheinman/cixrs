@@ -1,6 +1,7 @@
 use capnp;
 use capnp::capability::Promise;
 use engine::*;
+use messages::*;
 use futures::{future, Future, Stream};
 use futures::sink::Sink;
 use futures::sync::mpsc;
@@ -15,6 +16,7 @@ use uuid::Uuid;
 
 type SubscripionMap = HashMap<UserId, ExecutionSubscription>;
 type SymbolMap = HashMap<Symbol, u32>;
+pub type OrderMap = HashMap<OrderId, OrderWait>;
 
 // XXX: this will expose things like symbol and any other information
 // needed for routing orders, but right now we don't need any of that
@@ -32,7 +34,8 @@ pub trait OrderRouter {
 pub struct ServerContext<R> where R: 'static + Clone + OrderRouter {
     pub handle: reactor::Handle,
     pub router: R,
-    pub sub_map: Rc<RefCell<SubscripionMap>>
+    pub sub_map: Rc<RefCell<SubscripionMap>>,
+    pub pending_orders: Rc<RefCell<OrderMap>>
 }
 
 impl<R> ServerContext<R> where R: 'static + Clone + OrderRouter {
@@ -40,7 +43,8 @@ impl<R> ServerContext<R> where R: 'static + Clone + OrderRouter {
         ServerContext {
             handle: handle,
             router: router,
-            sub_map: Rc::new(RefCell::new(SubscripionMap::new()))
+            sub_map: Rc::new(RefCell::new(SubscripionMap::new())),
+            pending_orders: Rc::new(RefCell::new(OrderMap::new()))
         }
     }
 }
@@ -144,10 +148,25 @@ impl<R> Server for Session<R> where R: 'static + Clone + OrderRouter {
         let send = pry!(self.context.router.route_order(&order_info, msg).map_err(|e| {
             capnp::Error::failed("internal error".to_string())
         }));
-        
-        results.get().set_code(cp::ErrorCode::Ok);
-        results.get().set_id(order_id.raw());
-        Promise::ok(())
+
+        // Register this task to handle the engine's response and communicate it
+        // to the client
+        let send_future = NewOrderSend::new(order_id,
+                                            self.context.pending_orders.clone());
+        self.context.pending_orders.borrow_mut().insert(order_id,
+                                                        OrderWait::new());
+
+        Promise::from_future(send_future.and_then(move |c| {
+            let ret_code = match c {
+                ErrorCode::Success => cp::ErrorCode::Ok,
+                _ => cp::ErrorCode::Other
+            };
+            results.get().set_code(ret_code);
+            results.get().set_id(order_id.raw());
+            Ok(())
+        }).map_err(|e| {
+            capnp::Error::failed("internal error".to_string())
+        }))
     }
 
     fn cancel_order(&mut self, params: CancelOrderParams, mut results: CancelOrderResults)

@@ -8,6 +8,10 @@ const SYMBOL: &'static str = "GOOG";
 struct ExecutionPrinter;
 
 impl ExecutionHandler for ExecutionPrinter {
+    fn ack_order(&self, order_id: OrderId, status: ErrorCode) {
+        println!("ACK {}", order_id)
+    }
+
     fn handle_match(&self, execution: Execution) {
         println!("{}", execution)
     }

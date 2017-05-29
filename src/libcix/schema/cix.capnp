@@ -50,6 +50,7 @@ enum ErrorCode {
     notAuthenticated @1;
     alreadySubscribed @2;
     invalidArgs @3;
+    other @4;
 }
 
 enum AuthCode {

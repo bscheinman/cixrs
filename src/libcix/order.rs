@@ -266,8 +266,9 @@ pub mod trade_types {
         desc: String
     }
 
-    #[derive(Debug)]
+    #[derive(Clone, Copy, Debug)]
     pub enum ErrorCode {
+        Success,
         Other
     }
 

@@ -5,6 +5,7 @@ use futures::sync::{mpsc, oneshot};
 use libcix::book;
 use libcix::cix_capnp as cp;
 use libcix::order::trade_types::*;
+use messages::{CancelOrderMessage, EngineMessage, NewOrderMessage};
 use std::collections::HashMap;
 use std::error::Error;
 use std::thread;
@@ -20,33 +21,6 @@ struct OrderEngine<TMatcher, THandler>
     books:          HashMap<Symbol, book::OrderBook>,
     matcher:        TMatcher,
     handler:        THandler
-}
-
-pub struct NewOrderMessage {
-    pub user:       UserId,
-    pub order_id:   OrderId,
-    pub symbol:     Symbol,
-    pub side:       OrderSide,
-    pub price:      Price,
-    pub quantity:   Quantity
-}
-
-pub struct ChangeOrderMessage {
-    pub user:       UserId,
-    pub order_id:   OrderId,
-    pub price:      Price,
-    pub quantity:   Quantity
-}
-
-pub struct CancelOrderMessage {
-    pub user:       UserId,
-    pub order_id:   OrderId
-}
-
-pub enum EngineMessage {
-    NewOrder(NewOrderMessage),
-    //ChangeOrder(ChangeOrderMessage),
-    CancelOrder(CancelOrderMessage)
 }
 
 pub struct EngineHandle {

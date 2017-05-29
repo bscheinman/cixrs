@@ -106,6 +106,7 @@ struct BookSide<TCmp> where TCmp: OrderComparer {
 }
 
 pub trait ExecutionHandler: Send {
+    fn ack_order(&self, order_id: OrderId, status: ErrorCode);
     fn handle_match(&self, execution: Execution);
     fn handle_market_data_l1(&self, symbol: Symbol, bid: MdEntry, ask: MdEntry);
     fn handle_market_data_l2(&self, symbol: Symbol, bids: Vec<MdEntry>,
@@ -305,6 +306,9 @@ impl BasicMatcher {
 impl OrderMatcher for BasicMatcher {
     fn add_order<T: ExecutionHandler>(&mut self, book: &mut OrderBook,
                                       order: Order, handler: &T) {
+        // XXX: Should this be done after matching?
+        handler.ack_order(order.id, ErrorCode::Success);
+
         let mut o = order;
 
         {

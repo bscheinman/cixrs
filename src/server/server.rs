@@ -9,15 +9,17 @@ extern crate tokio_core;
 extern crate uuid;
 
 mod engine;
+mod messages;
 mod session;
 
-use engine::{EngineHandle, EngineMessage};
+use engine::EngineHandle;
 use futures::{future, Future, Stream};
 use futures::sink::Sink;
 use futures::sync::mpsc;
 use libcix::book::{BasicMatcher, ExecutionHandler};
 use libcix::cix_capnp as cp;
 use libcix::order::trade_types;
+use messages::{EngineMessage, SessionMessage};
 use session::{OrderRouter, OrderRoutingInfo, ServerContext};
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -30,13 +32,22 @@ use tokio_core::net::TcpListener;
 
 #[derive(Clone)]
 struct FeedExecutionHandler {
-    tx: mpsc::Sender<trade_types::Execution>
+    tx: mpsc::Sender<SessionMessage>
 }
 
 impl ExecutionHandler for FeedExecutionHandler {
+    fn ack_order(&self, order_id: trade_types::OrderId,
+                 status: trade_types::ErrorCode) {
+        println!("ACK {}: {:?}", order_id, status);
+        self.tx.clone().send(SessionMessage::NewOrderAck {
+            order_id: order_id,
+            status: status
+        }).wait();
+    }
+
     fn handle_match(&self, execution: trade_types::Execution) {
         println!("EXECUTION {}", execution);
-        self.tx.clone().send(execution).wait();
+        self.tx.clone().send(SessionMessage::Execution(execution)).wait();
     }
 
     fn handle_market_data_l1(&self, symbol: trade_types::Symbol,
@@ -156,12 +167,12 @@ impl OrderRouter for SingleRouter {
 }
 
 struct ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
-    rx: mpsc::Receiver<trade_types::Execution>,
+    rx: mpsc::Receiver<SessionMessage>,
     context: ServerContext<R>
 }
 
 impl<R> ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
-    fn new(rx: mpsc::Receiver<trade_types::Execution>, context: ServerContext<R>) -> Self {
+    fn new(rx: mpsc::Receiver<SessionMessage>, context: ServerContext<R>) -> Self {
         ExecutionPublisher {
             rx: rx,
             context: context
@@ -170,9 +181,24 @@ impl<R> ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
 
     fn handle_executions(self) {
         let context = self.context.clone();
-        let exec_feed = self.rx.for_each(move |execution| {
-            Self::handle_execution_side(&context, &execution, trade_types::OrderSide::Buy);
-            Self::handle_execution_side(&context, &execution, trade_types::OrderSide::Sell);
+        let exec_feed = self.rx.for_each(move |message| {
+            match message {
+                SessionMessage::Execution(execution) => {
+                    Self::handle_execution_side(&context, &execution,
+                                                trade_types::OrderSide::Buy);
+                    Self::handle_execution_side(&context, &execution,
+                                                trade_types::OrderSide::Sell);
+                },
+                SessionMessage::NewOrderAck{order_id, status} => {
+                    let order_map = context.pending_orders.borrow_mut();
+                    if let Some(waiter) = order_map.get(&order_id) {
+                        waiter.ack(status);
+                    } else {
+                        println!("received ack for unknown order {}", order_id);
+                    }
+                }
+            };
+
             future::ok(())
         });
 
