@@ -76,7 +76,7 @@ struct CancelOrder {
 }
 
 interface TradingSession {
-    authenticate @0 (user :Uuid) -> (response :AuthCode);
+    authenticate @0 (user :UInt64) -> (response :AuthCode);
     newOrder @1 (order :NewOrder) -> (code :ErrorCode, id :UInt64);
     executionSubscribe @2 (feed :ExecutionFeed)
         -> (code :ErrorCode, sub :ExecutionFeedSubscription);

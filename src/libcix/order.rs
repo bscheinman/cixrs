@@ -10,14 +10,21 @@ pub mod trade_types {
     use time;
     use uuid;
 
+    #[derive(Serialize, Deserialize)]
+    #[serde(remote = "time::Timespec")]
+    struct TimeSpecDef {
+        pub sec: i64,
+        pub nsec: i32
+    }
+
     pub const SYMBOL_MAX_LENGTH: usize = 8;
 
-    pub type UserId = uuid::Uuid;
+    pub type UserId = u64;
     pub type Price = f64;
     pub type Quantity = u32;
     pub type OrderTime = time::Timespec;
 
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
     pub struct TradingId {
         val: u64
     }
@@ -108,7 +115,7 @@ pub mod trade_types {
         }
     }
 
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
     pub struct OrderId {
         id: TradingId
     }
@@ -166,7 +173,7 @@ pub mod trade_types {
         }
     }
 
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
     pub struct ExecutionId {
         id: TradingId
     }
@@ -216,7 +223,7 @@ pub mod trade_types {
     // XXX: These dervied traits rely on the assumption that all bytes after the
     // initial NUL byte will also be NUL, but we can maintain that invariant
     // below
-    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
     pub struct Symbol {
         pub s: [u8; SYMBOL_MAX_LENGTH]
     }
@@ -312,7 +319,7 @@ pub mod trade_types {
         }
     }
 
-    #[derive(Clone, Copy, Debug)]
+    #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
     pub enum OrderSide {
         Buy,
         Sell
@@ -331,13 +338,13 @@ pub mod trade_types {
         }
     }
 
-    #[derive(Clone, Copy, Debug, Default)]
+    #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
     pub struct MdEntry {
         pub price:      Price,
         pub quantity:   Quantity
     }
 
-    #[derive(Clone, Copy, Debug)]
+    #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
     pub struct Order {
         pub id:         OrderId,
         pub user:       UserId,
@@ -345,6 +352,8 @@ pub mod trade_types {
         pub side:       OrderSide,
         pub price:      Price,
         pub quantity:   Quantity,
+
+        #[serde(with="TimeSpecDef")]
         pub update:     OrderTime
     }
 

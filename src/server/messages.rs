@@ -70,6 +70,7 @@ pub enum SessionMessage {
     Execution(Execution)
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct NewOrderMessage {
     pub user:       UserId,
     pub order_id:   OrderId,
@@ -79,6 +80,7 @@ pub struct NewOrderMessage {
     pub quantity:   Quantity
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct ChangeOrderMessage {
     pub user:       UserId,
     pub order_id:   OrderId,
@@ -86,11 +88,13 @@ pub struct ChangeOrderMessage {
     pub quantity:   Quantity
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct CancelOrderMessage {
     pub user:       UserId,
     pub order_id:   OrderId
 }
 
+#[derive(Serialize, Deserialize)]
 pub enum EngineMessage {
     NewOrder(NewOrderMessage),
     //ChangeOrder(ChangeOrderMessage),

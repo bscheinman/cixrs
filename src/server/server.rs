@@ -1,9 +1,14 @@
+extern crate bincode;
 extern crate capnp;
 #[macro_use]
 extern crate capnp_rpc;
 extern crate futures;
 extern crate futures_cpupool;
 extern crate libcix;
+extern crate memmap;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
 extern crate time;
 extern crate tokio_core;
 extern crate uuid;
@@ -11,6 +16,7 @@ extern crate uuid;
 mod engine;
 mod messages;
 mod session;
+mod wal;
 
 use engine::EngineHandle;
 use futures::{future, Future, Stream};
@@ -23,12 +29,14 @@ use messages::{EngineMessage, SessionMessage};
 use session::{OrderRouter, OrderRoutingInfo, ServerContext};
 use std::cell::Cell;
 use std::collections::HashMap;
+use std::env::current_dir;
 use std::iter::repeat;
 use std::net::ToSocketAddrs;
 use std::rc::Rc;
 use tokio_core::reactor;
 use tokio_core::io::Io;
 use tokio_core::net::TcpListener;
+use wal::Wal;
 
 #[derive(Clone)]
 struct FeedExecutionHandler {
@@ -168,11 +176,11 @@ impl OrderRouter for SingleRouter {
 
 struct ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
     rx: mpsc::Receiver<SessionMessage>,
-    context: ServerContext<R>
+    context: Rc<ServerContext<R>>
 }
 
 impl<R> ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
-    fn new(rx: mpsc::Receiver<SessionMessage>, context: ServerContext<R>) -> Self {
+    fn new(rx: mpsc::Receiver<SessionMessage>, context: Rc<ServerContext<R>>) -> Self {
         ExecutionPublisher {
             rx: rx,
             context: context
@@ -184,9 +192,9 @@ impl<R> ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
         let exec_feed = self.rx.for_each(move |message| {
             match message {
                 SessionMessage::Execution(execution) => {
-                    Self::handle_execution_side(&context, &execution,
+                    Self::handle_execution_side(context.clone(), &execution,
                                                 trade_types::OrderSide::Buy);
-                    Self::handle_execution_side(&context, &execution,
+                    Self::handle_execution_side(context.clone(), &execution,
                                                 trade_types::OrderSide::Sell);
                 },
                 SessionMessage::NewOrderAck{order_id, status} => {
@@ -205,7 +213,8 @@ impl<R> ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
         self.context.handle.spawn(exec_feed);
     }
 
-    fn handle_execution_side(context: &ServerContext<R>, execution: &trade_types::Execution,
+    fn handle_execution_side(context: Rc<ServerContext<R>>,
+                             execution: &trade_types::Execution,
                              side: trade_types::OrderSide) -> Result<(), ()> {
         let exec_id = execution.id;
         let (user, order) = match side {
@@ -261,10 +270,12 @@ fn main() {
     let (exec_tx, exec_rx) = mpsc::channel(1024 as usize);
     let handler = FeedExecutionHandler{ tx: exec_tx.clone() };
     let engine = EngineHandle::new(&symbols, matcher, handler).unwrap();
+    let wal = Wal::new(current_dir().unwrap().join("wal"),
+        (10 * 1024 * 1024) as usize).unwrap();
 
     let sym_context = Rc::new(SymbolLookup::new(&symbols).unwrap());
     let router = SingleRouter::new(sym_context, engine.tx.clone());
-    let context = ServerContext::new(handle.clone(), router);
+    let context = Rc::new(ServerContext::new(handle.clone(), router, wal));
     let publisher = ExecutionPublisher::new(exec_rx, context.clone());
     publisher.handle_executions();
 

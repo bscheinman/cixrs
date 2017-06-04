@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use tokio_core::reactor;
 use uuid::Uuid;
+use wal::Wal;
 
 type SubscripionMap = HashMap<UserId, ExecutionSubscription>;
 type SymbolMap = HashMap<Symbol, u32>;
@@ -30,36 +31,37 @@ pub trait OrderRouter {
     fn create_order_id(&self, o: &OrderRoutingInfo) -> Result<OrderId, String>;
 }
 
-#[derive(Clone)]
 pub struct ServerContext<R> where R: 'static + Clone + OrderRouter {
     pub handle: reactor::Handle,
     pub router: R,
     pub sub_map: Rc<RefCell<SubscripionMap>>,
-    pub pending_orders: Rc<RefCell<OrderMap>>
+    pub pending_orders: Rc<RefCell<OrderMap>>,
+    pub wal: RefCell<Wal>
 }
 
 impl<R> ServerContext<R> where R: 'static + Clone + OrderRouter {
-    pub fn new(handle: reactor::Handle, router: R) -> Self {
+    pub fn new(handle: reactor::Handle, router: R, wal: Wal) -> Self {
         ServerContext {
             handle: handle,
             router: router,
             sub_map: Rc::new(RefCell::new(SubscripionMap::new())),
-            pending_orders: Rc::new(RefCell::new(OrderMap::new()))
+            pending_orders: Rc::new(RefCell::new(OrderMap::new())),
+            wal: RefCell::new(wal)
         }
     }
 }
 
 pub struct Session<R> where R: 'static + Clone + OrderRouter {
-    context: ServerContext<R>,
+    context: Rc<ServerContext<R>>,
     user: UserId,
     authenticated: bool,
 }
 
 impl<R> Session<R> where R: 'static + Clone + OrderRouter {
-    pub fn new(context: ServerContext<R>) -> Self {
+    pub fn new(context: Rc<ServerContext<R>>) -> Self {
         Session {
             context: context,
-            user: Uuid::default(),
+            user: 0u64,
             authenticated: false
         }
     }
@@ -102,12 +104,7 @@ impl cp::execution_feed_subscription::Server for ExecutionSubscriptionMd {}
 impl<R> Server for Session<R> where R: 'static + Clone + OrderRouter {
     fn authenticate(&mut self, params: AuthenticateParams, mut results: AuthenticateResults)
                     -> Promise<(), capnp::Error> {
-        let raw_uuid = pry!(pry!(params.get()).get_user());
-        let userid = pry!(read_uuid(raw_uuid).map_err(|e| {
-            capnp::Error::failed("invalid userid".to_string())
-        }));
-
-        self.user = userid;
+        self.user = pry!(params.get()).get_user();
         self.authenticated = true;
 
         println!("new session for user {}", self.user);
@@ -145,6 +142,10 @@ impl<R> Server for Session<R> where R: 'static + Clone + OrderRouter {
             quantity: order.get_quantity()
         });
 
+        pry!(self.context.wal.borrow_mut().write_entry(&msg).map_err(|e| {
+            capnp::Error::failed(e)
+        }));
+
         let send = pry!(self.context.router.route_order(&order_info, msg).map_err(|e| {
             capnp::Error::failed("internal error".to_string())
         }));
@@ -161,6 +162,7 @@ impl<R> Server for Session<R> where R: 'static + Clone + OrderRouter {
                 ErrorCode::Success => cp::ErrorCode::Ok,
                 _ => cp::ErrorCode::Other
             };
+            println!("received ack for order {}", order_id);
             results.get().set_code(ret_code);
             results.get().set_id(order_id.raw());
             Ok(())
@@ -189,6 +191,11 @@ impl<R> Server for Session<R> where R: 'static + Clone + OrderRouter {
             user:       self.user,
             order_id:   order_id
         });
+
+        pry!(self.context.wal.borrow_mut().write_entry(&msg).map_err(|e| {
+            capnp::Error::failed(e)
+        }));
+
         let order_info = OrderRoutingInfo::ModifyOrderInfo { symbol_id: order_id.symbol_id() };
 
         let send = pry!(self.context.router.route_order(&order_info, msg).map_err(|e| {

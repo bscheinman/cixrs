@@ -3,6 +3,7 @@ extern crate capnp;
 extern crate capnp_rpc;
 extern crate futures;
 extern crate libcix;
+extern crate rand;
 extern crate tokio_core;
 extern crate uuid;
 
@@ -12,6 +13,7 @@ use futures::Future;
 use libcix::cix_capnp as cp;
 use libcix::order::trade_types::*;
 use self::cp::trading_session;
+use rand::Rng;
 use std::io;
 use std::net::ToSocketAddrs;
 use tokio_core::reactor;
@@ -153,10 +155,10 @@ fn main() {
     let mut context = ClientContext::new(core, cli);
 
     let mut auth_req = context.client.authenticate_request();
-    let userid = Uuid::new_v4();
+    let userid = rand::weak_rng().next_u64();
 
     println!("connecting with userid {}", userid);
-    auth_req.get().get_user().unwrap().set_bytes(userid.as_bytes());
+    auth_req.get().set_user(userid);
 
     let response = context.core.run(auth_req.send().promise).unwrap();
 
