@@ -1,6 +1,7 @@
 use capnp;
 use capnp::capability::Promise;
 use engine::*;
+use events::*;
 use messages::*;
 use futures::{future, Future, Stream};
 use futures::sink::Sink;

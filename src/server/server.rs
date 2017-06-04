@@ -14,6 +14,7 @@ extern crate tokio_core;
 extern crate uuid;
 
 mod engine;
+mod events;
 mod messages;
 mod session;
 mod wal;

@@ -1,6 +1,6 @@
 use libcix::order::trade_types::*;
 use messages::EngineMessage;
-use bincode::{serialize, deserialize, Bounded}; 
+use bincode::{serialize, deserialize, deserialize_from, serialized_size, Bounded}; 
 use memmap::{Mmap, Protection};
 use std::error::Error;
 use std::fs::{File, OpenOptions};
@@ -17,7 +17,7 @@ enum WriteResult {
     WriteError(String)
 }
 
-struct WalFile {
+pub struct WalFile {
     f: File,
     mem: Mmap,
     cursor: usize,
@@ -25,15 +25,30 @@ struct WalFile {
 }
 
 impl WalFile {
-    fn new<P: AsRef<Path>>(path: P, size: usize) -> Result<Self, String> {
-        let f = try!(OpenOptions::new().create_new(true).read(true).write(true).open(path).map_err(|e| {
+    fn open_impl<P: AsRef<Path>>(path: P, size: usize, writable: bool) -> Result<Self, String> {
+        let f = try!(OpenOptions::new().create_new(writable).read(true).write(writable).open(path.as_ref()).map_err(|e| {
             "failed to create file".to_string()
         }));
-        try!(f.set_len(size as u64).map_err(|e| {
-            "failed to size file".to_string()
-        }));
 
-        let mem = try!(Mmap::open(&f, Protection::ReadWrite).map_err(|e| {
+        let mut file_size = size;
+
+        if writable {
+            try!(f.set_len(file_size as u64).map_err(|e| {
+                "failed to size file".to_string()
+            }));
+        } else {
+            file_size = try!(f.metadata().map_err(|e| {
+                "failed to read file size".to_string()
+            })).len() as usize;
+        }
+
+        let prot = if writable {
+            Protection::ReadWrite
+        } else {
+            Protection::Read
+        };
+
+        let mem = try!(Mmap::open(&f, prot).map_err(|e| {
             format!("failed to map file ({})", e.description())
         }));
 
@@ -41,8 +56,16 @@ impl WalFile {
             f: f,
             mem: mem,
             cursor: 0 as usize,
-            capacity: size
+            capacity: file_size
         })
+    }
+
+    fn create<P: AsRef<Path>>(path: P, size: usize) -> Result<Self, String> {
+        Self::open_impl(path, size, true)
+    }
+
+    fn open<P: AsRef<Path>>(path: P) -> Result<Self, String> {
+        Self::open_impl(path, 0, false)
     }
 
     fn write_entry(&mut self, entry: &EngineMessage) -> WriteResult {
@@ -52,6 +75,9 @@ impl WalFile {
                     let raw_bytes = unsafe { self.mem.as_mut_slice() };
                     raw_bytes[self.cursor..(self.cursor + bytes.len())].clone_from_slice(bytes.as_slice());
                 }
+
+                println!("logged {} bytes to position {}", bytes.len(), self.cursor);
+
                 self.mem.flush_range(self.cursor, bytes.len());
                 self.cursor += bytes.len();
                 WriteResult::Success
@@ -61,6 +87,46 @@ impl WalFile {
                     SizeLimit => WriteResult::LogFull,
                     _ => WriteResult::WriteError(e.description().to_string())
                 }
+            }
+        }
+    }
+}
+
+pub struct WalReader {
+    wal: WalFile
+}
+
+impl WalReader {
+    pub fn new(wal: WalFile) -> Self {
+        WalReader {
+            wal: wal
+        }
+    }
+
+    pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Self, String> {
+        Ok(Self::new(try!(WalFile::open(path))))
+    }
+}
+
+impl Iterator for WalReader {
+    type Item = EngineMessage;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.wal.cursor == self.wal.capacity {
+            return None;
+        }
+
+        match deserialize::<Self::Item>(&(unsafe { self.wal.mem.as_mut_slice() }[self.wal.cursor..self.wal.capacity])) {
+            Ok(ref msg) => {
+                // Is this really the best way to advance the cursor?
+                // I don't see anything in the bincode documentation that provides the byte count
+                // as part of the deserialization call
+                self.wal.cursor += serialized_size(msg) as usize;
+                Some((*msg).clone())
+            },
+            Err(e) => {
+                println!("invalid read at position {}: {}", self.wal.cursor, e.description());
+                None
             }
         }
     }
@@ -94,7 +160,7 @@ impl Wal {
                 continue;
             }
 
-            let wal = try!(WalFile::new(wal_path, file_size).map_err(|e| {
+            let wal = try!(WalFile::create(wal_path, file_size).map_err(|e| {
                 format!("failed to rotate wal to {}: {}", path_name, e)
             }));
 
