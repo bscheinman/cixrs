@@ -33,11 +33,12 @@ use std::collections::HashMap;
 use std::env::current_dir;
 use std::iter::repeat;
 use std::net::ToSocketAddrs;
+use std::path::Path;
 use std::rc::Rc;
 use tokio_core::reactor;
 use tokio_core::io::Io;
 use tokio_core::net::TcpListener;
-use wal::Wal;
+use wal::{Wal, WalDirectoryReader};
 
 #[derive(Clone)]
 struct FeedExecutionHandler {
@@ -260,6 +261,28 @@ impl<R> ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
     }
 }
 
+fn init_wal<P: AsRef<Path>, R: OrderRouter>(dir: P, router: &R) -> Wal {
+    let reader = WalDirectoryReader::new(dir.as_ref(), "wal_".to_string()).unwrap();
+
+    // Replay all messages from existing log files to catch books up
+    for entry in reader {
+        match entry {
+            Ok(msg) => {
+                // XXX: Actually populate this
+                // It might make more sense to have this automatically derive from the message
+                // itself because right now that's possible in all cases.
+                let routing_info = OrderRoutingInfo::ModifyOrderInfo{ symbol_id: 0u32 };
+                router.route_order(&routing_info, msg).unwrap();
+            },
+            Err(e) => {
+                panic!("failed to replay messages: {}", e);
+            }
+        }
+    }
+
+    Wal::new(dir, (10 * 1024 * 1024) as usize).unwrap()
+}
+
 fn main() {
     let mut core = reactor::Core::new().unwrap();
     let handle = core.handle();
@@ -271,11 +294,10 @@ fn main() {
     let (exec_tx, exec_rx) = mpsc::channel(1024 as usize);
     let handler = FeedExecutionHandler{ tx: exec_tx.clone() };
     let engine = EngineHandle::new(&symbols, matcher, handler).unwrap();
-    let wal = Wal::new(current_dir().unwrap().join("wal"),
-        (10 * 1024 * 1024) as usize).unwrap();
-
     let sym_context = Rc::new(SymbolLookup::new(&symbols).unwrap());
     let router = SingleRouter::new(sym_context, engine.tx.clone());
+    let wal = init_wal(current_dir().unwrap().join("wal"), &router);
+
     let context = Rc::new(ServerContext::new(handle.clone(), router, wal));
     let publisher = ExecutionPublisher::new(exec_rx, context.clone());
     publisher.handle_executions();

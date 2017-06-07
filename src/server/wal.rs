@@ -174,8 +174,6 @@ impl Wal {
 
             return Ok((wal, index + 1))
         }
-
-        unreachable!()
     }
 
     fn rotate(&mut self) -> Result<(), String> {
@@ -258,6 +256,8 @@ impl Iterator for WalDirectoryReader {
                 }
             }
 
+            // XXX: We actually need to sort these first to make sure we read them in the correct
+            // order
             let entry = match self.dir_iter.next() {
                 Some(res) => {
                     match res {
