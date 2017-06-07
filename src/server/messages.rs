@@ -34,6 +34,8 @@ pub struct CancelOrderMessage {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum EngineMessage {
+    // This is a temporary hack to avoid reading messages from empty log files
+    NullMessage,
     NewOrder(NewOrderMessage),
     //ChangeOrder(ChangeOrderMessage),
     CancelOrder(CancelOrderMessage)

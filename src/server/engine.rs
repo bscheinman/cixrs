@@ -147,7 +147,8 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
         match message {
             EngineMessage::NewOrder(msg) => self.new_order(msg),
             //EngineMessage::ChangeOrder(msg) => self.change_order(msg),
-            EngineMessage::CancelOrder(msg) => self.cancel_order(msg)
+            EngineMessage::CancelOrder(msg) => self.cancel_order(msg),
+            EngineMessage::NullMessage => unreachable!()
         }
     }
 }
