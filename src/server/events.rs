@@ -1,5 +1,5 @@
 use libcix::order::trade_types::*;
-use session::OrderMap;
+use session::{OrderMap, OrderRouter, ServerContext};
 use futures::{Async, Poll};
 use futures::future::Future;
 use futures::task::{park, Task};
@@ -43,21 +43,41 @@ impl Drop for NewOrderSend {
     }
 }
 
-pub struct OrderWait {
-    pub status: Cell<Option<ErrorCode>>,
+#[derive(Clone)]
+pub struct SerializationPoint<T> where T: AsRef<Cell<u32>> {
+    pub gen: T,
+    pub target: u32
+}
+
+impl<T> Future for SerializationPoint<T> where T: AsRef<Cell<u32>> {
+    type Item = ();
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        if self.gen.as_ref().get() >= self.target {
+            Ok(Async::Ready(()))
+        } else {
+            Ok(Async::NotReady)
+        }
+    }
+}
+
+// This must already be provided somewhere in tokio
+pub struct WaitEvent<T> {
+    pub status: Cell<Option<T>>,
     task: Task
 }
 
-impl OrderWait {
+impl<T> WaitEvent<T> {
     pub fn new() -> Self {
-        OrderWait {
+        WaitEvent {
             status: Cell::new(None),
             task: park()
         }
     }
 
-    pub fn ack(&self, status: ErrorCode) {
-        self.status.set(Some(status));
+    pub fn ack(&self, result: T) {
+        self.status.set(Some(result));
         self.task.unpark();
     }
 }

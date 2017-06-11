@@ -27,10 +27,11 @@ use libcix::book::{BasicMatcher, ExecutionHandler};
 use libcix::cix_capnp as cp;
 use libcix::order::trade_types;
 use messages::{EngineMessage, SessionMessage};
-use session::{OrderRouter, OrderRoutingInfo, ServerContext};
+use session::{OrderRouter, OrderRoutingInfo, ServerContext, ServerState};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::env::current_dir;
+use std::error::Error;
 use std::iter::repeat;
 use std::net::ToSocketAddrs;
 use std::path::Path;
@@ -48,7 +49,6 @@ struct FeedExecutionHandler {
 impl ExecutionHandler for FeedExecutionHandler {
     fn ack_order(&self, order_id: trade_types::OrderId,
                  status: trade_types::ErrorCode) {
-        println!("ACK {}: {:?}", order_id, status);
         self.tx.clone().send(SessionMessage::NewOrderAck {
             order_id: order_id,
             status: status
@@ -56,7 +56,6 @@ impl ExecutionHandler for FeedExecutionHandler {
     }
 
     fn handle_match(&self, execution: trade_types::Execution) {
-        println!("EXECUTION {}", execution);
         self.tx.clone().send(SessionMessage::Execution(execution)).wait();
     }
 
@@ -155,8 +154,11 @@ impl SingleRouter {
 
 impl OrderRouter for SingleRouter {
     fn route_order(&self, o: &OrderRoutingInfo, msg: EngineMessage) -> Result<(), String> {
-        self.tx.clone().send(msg).wait();
-        Ok(())
+        self.broadcast_message(msg)
+    }
+
+    fn broadcast_message(&self, msg: EngineMessage) -> Result<(), String> {
+        self.tx.clone().send(msg).wait().map(|_| ()).map_err(|e| e.description().to_string())
     }
 
     fn create_order_id(&self, o: &OrderRoutingInfo) -> Result<trade_types::OrderId, String> {
@@ -174,6 +176,10 @@ impl OrderRouter for SingleRouter {
             unreachable!()
         }
     }
+
+    fn n_engine(&self) -> u32 {
+        1u32
+    }
 }
 
 struct ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
@@ -189,23 +195,62 @@ impl<R> ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
         }
     }
 
+    fn notify_serializations(context: &ServerContext<R>, gen: u32) {
+        let mut syncs = context.pending_syncs.borrow_mut();
+
+        {
+            let waiter = if let Some(w) = syncs.get(&gen) {
+                w
+            } else {
+                return;
+            };
+
+            waiter.pending_count.set(waiter.pending_count.get() - 1);
+            if waiter.pending_count.get() > 0 {
+                return;
+            }
+
+            assert!(gen == context.sync_gen.get() + 1);
+            context.sync_gen.set(gen);
+            waiter.event.ack(());
+        }
+
+        syncs.remove(&gen);
+
+    }
+
     fn handle_executions(self) {
         let context = self.context.clone();
         let exec_feed = self.rx.for_each(move |message| {
+            let running = if let ServerState::Running = context.state.get() {
+                true
+            } else {
+                false
+            };
+
             match message {
                 SessionMessage::Execution(execution) => {
-                    Self::handle_execution_side(context.clone(), &execution,
-                                                trade_types::OrderSide::Buy);
-                    Self::handle_execution_side(context.clone(), &execution,
-                                                trade_types::OrderSide::Sell);
+                    if running {
+                        println!("EXECUTION {}", execution);
+                        Self::handle_execution_side(context.as_ref(), &execution,
+                                                    trade_types::OrderSide::Buy);
+                        Self::handle_execution_side(context.as_ref(), &execution,
+                                                    trade_types::OrderSide::Sell);
+                    }
                 },
                 SessionMessage::NewOrderAck{order_id, status} => {
-                    let order_map = context.pending_orders.borrow_mut();
-                    if let Some(waiter) = order_map.get(&order_id) {
-                        waiter.ack(status);
-                    } else {
-                        println!("received ack for unknown order {}", order_id);
+                    if running {
+                        println!("ACK {}: {:?}", order_id, status);
+                        let order_map = context.pending_orders.borrow_mut();
+                        if let Some(waiter) = order_map.get(&order_id) {
+                            waiter.ack(status);
+                        } else {
+                            println!("received ack for unknown order {}", order_id);
+                        }
                     }
+                },
+                SessionMessage::SerializationResponse(gen) => {
+                    Self::notify_serializations(context.as_ref(), gen);
                 }
             };
 
@@ -215,7 +260,7 @@ impl<R> ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
         self.context.handle.spawn(exec_feed);
     }
 
-    fn handle_execution_side(context: Rc<ServerContext<R>>,
+    fn handle_execution_side(context: &ServerContext<R>,
                              execution: &trade_types::Execution,
                              side: trade_types::OrderSide) -> Result<(), ()> {
         let exec_id = execution.id;
@@ -263,6 +308,7 @@ impl<R> ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
 
 fn init_wal<P: AsRef<Path>, R: OrderRouter>(dir: P, router: &R) -> Wal {
     let reader = WalDirectoryReader::new(dir.as_ref(), "wal_".to_string()).unwrap();
+    let mut replay_count = 0usize;
 
     // Replay all messages from existing log files to catch books up
     for entry in reader {
@@ -273,12 +319,15 @@ fn init_wal<P: AsRef<Path>, R: OrderRouter>(dir: P, router: &R) -> Wal {
                 // itself because right now that's possible in all cases.
                 let routing_info = OrderRoutingInfo::ModifyOrderInfo{ symbol_id: 0u32 };
                 router.route_order(&routing_info, msg).unwrap();
+                replay_count += 1;
             },
             Err(e) => {
                 panic!("failed to replay messages: {}", e);
             }
         }
     }
+
+    println!("replayed {} events", replay_count);
 
     Wal::new(dir, (10 * 1024 * 1024) as usize).unwrap()
 }
@@ -293,9 +342,10 @@ fn main() {
     let matcher = BasicMatcher{};
     let (exec_tx, exec_rx) = mpsc::channel(1024 as usize);
     let handler = FeedExecutionHandler{ tx: exec_tx.clone() };
-    let engine = EngineHandle::new(&symbols, matcher, handler).unwrap();
+    let engine = EngineHandle::new(&symbols, &matcher, &handler, &exec_tx).unwrap();
     let sym_context = Rc::new(SymbolLookup::new(&symbols).unwrap());
     let router = SingleRouter::new(sym_context, engine.tx.clone());
+
     let wal = init_wal(current_dir().unwrap().join("wal"), &router);
 
     let context = Rc::new(ServerContext::new(handle.clone(), router, wal));
@@ -306,18 +356,30 @@ fn main() {
         .expect("could not parse address");
     let socket = TcpListener::bind(&addr, &handle).unwrap();
 
-    let done = socket.incoming().for_each(move |(s, _)| {
+    // Don't start listening for connections until replay is complete
+    // This future has to be created lazily so that there is an active task to register when we
+    // call serialization_point
+    let replay_sync = future::lazy(|| ServerContext::serialization_point(context.clone()));
+
+    let listen_context = context.clone();
+    let listen = socket.incoming().for_each(move |(s, _)| {
         let (reader, writer) = s.split();
         let network = capnp_rpc::twoparty::VatNetwork::new(reader, writer,
             capnp_rpc::rpc_twoparty_capnp::Side::Server, Default::default());
 
-        let sess = cp::trading_session::ToClient::new(session::Session::new(context.clone()))
+        let sess = cp::trading_session::ToClient::new(session::Session::new(listen_context.clone()))
             .from_server::<capnp_rpc::Server>();
         let rpc_system = capnp_rpc::RpcSystem::new(Box::new(network), Some(sess.client));
 
         handle.spawn(rpc_system.map_err(|_| ()));
         Ok(())
-    });
+    }).map_err(|_| ());
+
+    let done = replay_sync.and_then(|_| {
+        println!("order replay complete");
+        context.state.set(ServerState::Running);
+        future::ok(())
+    }).and_then(|_| listen);
 
     core.run(done).unwrap();
 }

@@ -9,7 +9,7 @@ use futures::sync::mpsc;
 use libcix::cix_capnp as cp;
 use cp::trading_session::*;
 use libcix::order::trade_types::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use tokio_core::reactor;
@@ -18,7 +18,15 @@ use wal::Wal;
 
 type SubscripionMap = HashMap<UserId, ExecutionSubscription>;
 type SymbolMap = HashMap<Symbol, u32>;
+type OrderWait = WaitEvent<ErrorCode>;
+type SyncWait = WaitEvent<()>;
 pub type OrderMap = HashMap<OrderId, OrderWait>;
+pub type SyncMap = HashMap<u32, SyncWaitRecord>;
+
+pub struct SyncWaitRecord {
+    pub event: SyncWait,
+    pub pending_count: Cell<u32>
+}
 
 // XXX: this will expose things like symbol and any other information
 // needed for routing orders, but right now we don't need any of that
@@ -30,14 +38,37 @@ pub enum OrderRoutingInfo {
 pub trait OrderRouter {
     fn route_order(&self, o: &OrderRoutingInfo, msg: EngineMessage) -> Result<(), String>;
     fn create_order_id(&self, o: &OrderRoutingInfo) -> Result<OrderId, String>;
+    fn broadcast_message(&self, msg: EngineMessage) -> Result<(), String>;
+    fn n_engine(&self) -> u32;
 }
 
+#[derive(Clone, Copy)]
+pub enum ServerState {
+    Loading,
+    Running
+}
+
+// XXX: The fact that everything in here has to be wrapped in Rc and Cells seems like a really bad
+// sign but I also don't see a good way around it given that an arbitrary number of sessions need
+// to be able to observe this state (even though it really will only be mutated by a single class
+// (not sessions).  There are two things we should do to improve this in the immediate term:
+//
+// 1) Separate out all fields that are only needed by the server controller itself and not each
+//    individual session
+// 2) Explore using weak pointers within sessions, although I don't think this will actually help
+//    at all because Rc still can't be upgraded to a mutable reference if there are any outstanding
+//    weak references
 pub struct ServerContext<R> where R: 'static + Clone + OrderRouter {
     pub handle: reactor::Handle,
     pub router: R,
     pub sub_map: Rc<RefCell<SubscripionMap>>,
     pub pending_orders: Rc<RefCell<OrderMap>>,
-    pub wal: RefCell<Wal>
+    pub wal: RefCell<Wal>,
+    // This is an Rc so it can be observed without sharing the entire context
+    pub sync_gen: Rc<Cell<u32>>,
+    pub sync_ticket: Cell<u32>,
+    pub pending_syncs: RefCell<SyncMap>,
+    pub state: Cell<ServerState>
 }
 
 impl<R> ServerContext<R> where R: 'static + Clone + OrderRouter {
@@ -47,7 +78,30 @@ impl<R> ServerContext<R> where R: 'static + Clone + OrderRouter {
             router: router,
             sub_map: Rc::new(RefCell::new(SubscripionMap::new())),
             pending_orders: Rc::new(RefCell::new(OrderMap::new())),
-            wal: RefCell::new(wal)
+            wal: RefCell::new(wal),
+            sync_gen: Rc::new(Cell::new(0u32)),
+            sync_ticket: Cell::new(0u32),
+            pending_syncs: RefCell::new(SyncMap::new()),
+            state: Cell::new(ServerState::Loading)
+        }
+    }
+
+    pub fn serialization_point<T>(ctx: T) -> SerializationPoint<Rc<Cell<u32>>>
+            where T: AsRef<Self> {
+        let context = ctx.as_ref();
+        let ticket = context.sync_ticket.get() + 1;
+        context.sync_ticket.set(ticket);
+
+        context.router.broadcast_message(EngineMessage::SerializationMessage(ticket)).unwrap();
+        let sync_record = SyncWaitRecord {
+            event: SyncWait::new(),
+            pending_count: Cell::new(context.router.n_engine())
+        };
+        context.pending_syncs.borrow_mut().insert(ticket, sync_record);
+
+        SerializationPoint {
+            gen: context.sync_gen.clone(),
+            target: ticket
         }
     }
 }

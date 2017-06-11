@@ -1,11 +1,11 @@
 use futures;
 use futures::future;
-use futures::{Future, Stream};
+use futures::{Future, Sink, Stream};
 use futures::sync::{mpsc, oneshot};
 use libcix::book;
 use libcix::cix_capnp as cp;
 use libcix::order::trade_types::*;
-use messages::{CancelOrderMessage, EngineMessage, NewOrderMessage};
+use messages::*;
 use std::collections::HashMap;
 use std::error::Error;
 use std::thread;
@@ -20,7 +20,8 @@ struct OrderEngine<TMatcher, THandler>
     symbols:        Vec<Symbol>,
     books:          HashMap<Symbol, book::OrderBook>,
     matcher:        TMatcher,
-    handler:        THandler
+    handler:        THandler,
+    responder:      mpsc::Sender<SessionMessage>
 }
 
 pub struct EngineHandle {
@@ -30,17 +31,19 @@ pub struct EngineHandle {
 }
 
 impl EngineHandle {
-    pub fn new<TMatcher, THandler> (symbols: &Vec<Symbol>, matcher: TMatcher,
-                                    handler: THandler) -> Result<Self, String>
+    pub fn new<TMatcher, THandler> (symbols: &Vec<Symbol>, matcher: &TMatcher,
+                                    handler: &THandler,
+                                    responder: &mpsc::Sender<SessionMessage>) -> Result<Self, String>
             where TMatcher: 'static + book::OrderMatcher + Clone,
                   THandler: 'static + book::ExecutionHandler + Clone {
         let (channel_tx, channel_rx) = oneshot::channel();
         let s_clone = symbols.clone();
         let m_clone = matcher.clone();
         let h_clone = handler.clone();
+        let r_clone = responder.clone();
 
         thread::spawn(move || -> Result<(), String> {
-            let mut engine = OrderEngine::new(s_clone, m_clone, h_clone)
+            let mut engine = OrderEngine::new(s_clone, m_clone, h_clone, r_clone)
                 .unwrap_or_else(|e| {
                     panic!("failed to create order engine: {}", e)
                 });
@@ -73,13 +76,15 @@ impl EngineHandle {
 impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
         where TMatcher: book::OrderMatcher,
               THandler: book::ExecutionHandler {
-    pub fn new(symbols: Vec<Symbol>, matcher: TMatcher, handler: THandler) ->
+    pub fn new(symbols: Vec<Symbol>, matcher: TMatcher, handler: THandler,
+               responder: mpsc::Sender<SessionMessage>) ->
             Result<OrderEngine<TMatcher, THandler>, String> {
         let mut engine = OrderEngine {
             symbols: symbols,
             books: HashMap::new(),
             matcher: matcher,
-            handler: handler
+            handler: handler,
+            responder: responder
         };
 
         // XXX: This is fine for now because we're only using one engine, but once we start
@@ -142,12 +147,25 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
         Ok(())
     }
 
+    fn serialization_point(&mut self, seq: u32) -> Result<(), String> {
+        // If we process messages asynchronously then this will have to track which have been
+        // processed but right now because we handle them synchronously we can already be sure that
+        // we're caught up.
+        self.responder.clone().send(SessionMessage::SerializationResponse(seq)).wait()
+            .map(|_| ())
+            .map_err(|e| {
+                "failed to send serialization response".to_string()
+            }
+        )
+    }
+
     pub fn process_message(&mut self, message: EngineMessage) ->
             Result<(), String> {
         match message {
             EngineMessage::NewOrder(msg) => self.new_order(msg),
             //EngineMessage::ChangeOrder(msg) => self.change_order(msg),
             EngineMessage::CancelOrder(msg) => self.cancel_order(msg),
+            EngineMessage::SerializationMessage(seq) => self.serialization_point(seq),
             EngineMessage::NullMessage => unreachable!()
         }
     }

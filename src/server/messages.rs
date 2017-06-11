@@ -1,11 +1,13 @@
 use libcix::order::trade_types::*;
 
+// XXX: Rename now that this includes control metadata as well
 pub enum SessionMessage {
     NewOrderAck {
         order_id: OrderId,
         status: ErrorCode
     },
-    Execution(Execution)
+    Execution(Execution),
+    SerializationResponse(u32)
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -38,5 +40,7 @@ pub enum EngineMessage {
     NullMessage,
     NewOrder(NewOrderMessage),
     //ChangeOrder(ChangeOrderMessage),
-    CancelOrder(CancelOrderMessage)
+    CancelOrder(CancelOrderMessage),
+    // Don't respond to this until all previous messages have been processed
+    SerializationMessage(u32)
 }

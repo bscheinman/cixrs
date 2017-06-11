@@ -24,7 +24,7 @@ fn print_entries<L>(iter: L) where L: Iterator<Item=Result<EngineMessage, String
                     EngineMessage::CancelOrder(data) => {
                         println!("cancel order {}", data.order_id);
                     },
-                    EngineMessage::NullMessage => unreachable!()
+                    _ => unreachable!()
                 }
             },
             Err(e) => {
