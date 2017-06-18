@@ -62,7 +62,7 @@ impl ExecutionHandler for FeedExecutionHandler {
     fn handle_market_data_l1(&self, symbol: trade_types::Symbol,
                              bid: trade_types::MdEntry,
                              ask: trade_types::MdEntry) {
-        println!("{} bid {}x{}, ask {}x{}", symbol, bid.price, bid.quantity,
+        println!("{} bid {} x {}, ask {} x {}", symbol, bid.price, bid.quantity,
                  ask.price, ask.quantity);
     }
 
@@ -248,7 +248,7 @@ impl<R> ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
             match message {
                 SessionMessage::Execution(execution) => {
                     if running {
-                        println!("EXECUTION {}", execution);
+                        //println!("EXECUTION {}", execution);
                         Self::handle_execution_side(context.as_ref(), &execution,
                                                     trade_types::OrderSide::Buy);
                         Self::handle_execution_side(context.as_ref(), &execution,
@@ -257,7 +257,7 @@ impl<R> ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
                 },
                 SessionMessage::NewOrderAck{order_id, status} => {
                     if running {
-                        println!("ACK {}: {:?}", order_id, status);
+                        //println!("ACK {}: {:?}", order_id, status);
                         let order_map = context.pending_orders.borrow_mut();
                         if let Some(waiter) = order_map.get(&order_id) {
                             waiter.ack(status);
@@ -359,7 +359,8 @@ fn main() {
     let sym_context = Rc::new(SymbolLookup::new(&symbols).unwrap());
     let router = SingleRouter::new(sym_context, engine.tx.clone());
 
-    let wal = init_wal(current_dir().unwrap().join("wal"), &router);
+    let wal_dir = Path::new("/home/brendon/wal");
+    let wal = init_wal(wal_dir, &router);
 
     let context = Rc::new(ServerContext::new(handle.clone(), router, wal));
     let publisher = ExecutionPublisher::new(exec_rx, context.clone());

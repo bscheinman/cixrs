@@ -276,6 +276,7 @@ pub mod trade_types {
     #[derive(Clone, Copy, Debug)]
     pub enum ErrorCode {
         Success,
+        DuplicateId,
         Other
     }
 

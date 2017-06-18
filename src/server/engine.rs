@@ -211,10 +211,7 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
     }
 
     fn publish_md(&mut self) {
-        println!("publishing market data for {} dirty symbols", self.dirty_symbols.len());
-
         for symbol in self.dirty_symbols.iter() {
-            println!("publishing updated market data for symbol {}", symbol);
             self.matcher.publish_md(self.books.get(symbol).unwrap(), &self.handler);
         }
 

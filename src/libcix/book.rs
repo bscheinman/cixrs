@@ -94,9 +94,9 @@ impl heap::Comparer<Order> for SellComparer {
 }
 
 trait OrderProcessor<THandle> {
+    fn has_order(&self, order_id: OrderId) -> bool;
     fn add_order(&mut self, new_order: Order) -> THandle;
-    fn match_order(&mut self, new_order: &mut Order,
-                   handler: &ExecutionHandler);
+    fn match_order(&mut self, new_order: &mut Order, handler: &ExecutionHandler);
 }
 
 struct BookSide<TCmp> where TCmp: OrderComparer {
@@ -176,6 +176,11 @@ impl<TCmp> BookSide<TCmp> where TCmp: OrderComparer {
 
 impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
         where TCmp: Debug + OrderComparer {
+
+    fn has_order(&self, order_id: OrderId) -> bool {
+        self.lookup.contains_key(&order_id)
+    }
+
     fn add_order(&mut self, new_order: Order) -> heap::HeapHandle {
         let order_id = new_order.id;
         let handle = self.orders.insert(new_order).unwrap();
@@ -185,8 +190,7 @@ impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
         handle
     }
 
-    fn match_order(&mut self, new_order: &mut Order,
-                 handler: &ExecutionHandler) {
+    fn match_order(&mut self, new_order: &mut Order, handler: &ExecutionHandler) {
         while let Some(handle) = self.orders.peek() {
             let ex = {
                 let book_order = self.orders.get(handle);
@@ -294,10 +298,20 @@ pub struct BasicMatcher;
 impl OrderMatcher for BasicMatcher {
     fn add_order<T: ExecutionHandler>(&mut self, book: &mut OrderBook,
                                       order: Order, handler: &T) {
-        // XXX: Should this be done after matching?
-        handler.ack_order(order.id, ErrorCode::Success);
-
         let mut o = order;
+
+        {
+            let book: &mut OrderProcessor<heap::HeapHandle> = match order.side {
+                OrderSide::Buy  => &mut book.buys,
+                OrderSide::Sell => &mut book.sells
+            };
+
+            if book.has_order(order.id) {
+                println!("rejecting duplicate order {}", order.id);
+                handler.ack_order(order.id, ErrorCode::DuplicateId);
+                return;
+            }
+        }
 
         {
             let counter_book: &mut OrderProcessor<heap::HeapHandle> =
@@ -317,6 +331,8 @@ impl OrderMatcher for BasicMatcher {
 
             book.add_order(o);
         }
+
+        handler.ack_order(order.id, ErrorCode::Success);
 
         //self.publish_md(book, handler);
     }
