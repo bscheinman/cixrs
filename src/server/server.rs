@@ -6,6 +6,7 @@ extern crate futures;
 extern crate futures_cpupool;
 extern crate libcix;
 extern crate memmap;
+extern crate regex;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
@@ -176,7 +177,7 @@ impl OrderRouter for SingleRouter {
 
     fn replay_message(&self, msg: EngineMessage) -> Result<(), String> {
         if let EngineMessage::NewOrder(new_order) = msg {
-            println!("replaying order {}", new_order.order_id);
+            //println!("replaying order {}", new_order.order_id);
 
             let order_id = new_order.order_id.clone();
             let sym_id = try!(self.symbols.get_symbol_id(&new_order.symbol).map_err(|_| {
@@ -187,7 +188,6 @@ impl OrderRouter for SingleRouter {
             let ref sym_seq = self.seq_list[sym_id];
 
             if order_seq >= sym_seq.get() {
-                println!("advancing {} order sequence to {}", new_order.symbol, order_seq + 1);
                 sym_seq.set(order_seq + 1);
             }
         }
@@ -324,7 +324,7 @@ impl<R> ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
 }
 
 fn init_wal<P: AsRef<Path>, R: OrderRouter>(dir: P, router: &R) -> Wal {
-    let reader = WalDirectoryReader::new(dir.as_ref(), "wal_".to_string()).unwrap();
+    let reader = WalDirectoryReader::new(dir.as_ref()).unwrap();
     let mut replay_count = 0usize;
 
     // Replay all messages from existing log files to catch books up

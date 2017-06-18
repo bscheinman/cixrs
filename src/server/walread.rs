@@ -1,6 +1,7 @@
 extern crate bincode;
 extern crate libcix;
 extern crate memmap;
+extern crate regex;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
@@ -42,7 +43,7 @@ fn main() {
     let wal_path = Path::new(path_str.as_str());
 
     if wal_path.is_dir() {
-        let reader = wal::WalDirectoryReader::new(wal_path, "wal_".to_string()).unwrap();
+        let reader = wal::WalDirectoryReader::new(wal_path).unwrap();
         print_entries(reader);
     } else {
         let reader = wal::WalReader::from_path(wal_path).unwrap();

@@ -2,9 +2,14 @@ use libcix::order::trade_types::*;
 use messages::EngineMessage;
 use bincode::{serialize, deserialize, deserialize_from, serialized_size, Bounded}; 
 use memmap::{Mmap, Protection};
+use regex::Regex;
 use std::error::Error;
+use std::ffi::OsString;
 use std::fs::{File, OpenOptions, read_dir, ReadDir};
 use std::path::{Path, PathBuf};
+use std::slice;
+use std::str::FromStr;
+use std::vec::Vec;
 
 #[derive(Serialize, Deserialize)]
 struct WalHeader {
@@ -225,21 +230,37 @@ impl Wal {
 }
 
 pub struct WalDirectoryReader {
-    dir_iter: ReadDir,
-    prefix: String,
+    dir: OsString,
+    files: Vec<u32>,
+    file_index: usize,
     reader: Option<WalReader>
 }
 
 impl WalDirectoryReader {
-    pub fn new<P: AsRef<Path>>(dir: P, prefix: String) -> Result<Self, String> {
+    pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, String> {
         let path_name = dir.as_ref().to_str().unwrap_or("<unknown>").to_string();
-        let dir_iter = try!(read_dir(dir).map_err(|e| {
+        let dir_str = dir.as_ref().as_os_str().to_os_string();
+        let dir_iter: ReadDir = try!(read_dir(dir).map_err(|e| {
             format!("failed to walk directory {}", path_name)
         }));
 
+        let wal_regex = Regex::new(r"^wal_(\d+)$").unwrap();
+        let mut wal_files: Vec<u32> = dir_iter.filter_map(|item| {
+            let entry = item.unwrap();
+            if entry.file_type().unwrap().is_file() {
+                wal_regex.captures(entry.path().file_name().unwrap().to_str().unwrap()).map(|c| {
+                    u32::from_str(&c[1]).unwrap()
+                })
+            } else {
+                None
+            }
+        }).collect();
+        wal_files.sort();
+
         Ok(WalDirectoryReader {
-            dir_iter: dir_iter,
-            prefix: prefix,
+            dir: dir_str,
+            files: wal_files,
+            file_index: 0usize,
             reader: None
         })
     }
@@ -256,24 +277,18 @@ impl Iterator for WalDirectoryReader {
                 }
             }
 
-            // XXX: We actually need to sort these first to make sure we read them in the correct
-            // order
-            let entry = match self.dir_iter.next() {
-                Some(res) => {
-                    match res {
-                        Ok(e) => e,
-                        Err(e) => {
-                            return Some(Err(e.description().to_string()));
-                        }
-                    }
-                },
-                None => {
-                    // Done iterating directory
-                    return None;
-                }
-            };
+            if self.file_index >= self.files.len() {
+                return None;
+            }
 
-            self.reader = Some(match WalReader::from_path(entry.path().as_path()) {
+            let basename = format!("wal_{}", self.files[self.file_index]);
+            self.file_index += 1;
+
+            println!("reading entries from wal file {}", basename);
+
+            let mut path = Path::new(&self.dir).to_path_buf();
+            path.push(basename);
+            self.reader = Some(match WalReader::from_path(path.as_path()) {
                 Ok(r) => r,
                 Err(e) => {
                     return Some(Err(e));
