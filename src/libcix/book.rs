@@ -285,23 +285,11 @@ pub trait OrderMatcher: Send {
     fn add_order<T: ExecutionHandler>(&mut self, book: &mut OrderBook, order: Order, handler: &T);
     fn cancel_order<T: ExecutionHandler>(&mut self, &mut OrderBook,
                                          order: OrderId, handler: &T);
+    fn publish_md<T: ExecutionHandler>(&self, book: &OrderBook, handler: &T);
 }
 
 #[derive(Clone)]
 pub struct BasicMatcher;
-
-impl BasicMatcher {
-    fn publish_md<T: ExecutionHandler>(&self, book: &OrderBook, handler: &T) {
-        let top_bid = book.buys.top_order();
-        let top_ask = book.sells.top_order();
-        handler.handle_market_data_l1(book.symbol, top_bid, top_ask);
-
-        // XXX: make depth configurable
-        let l2_bids = book.buys.get_l2_data(3);
-        let l2_asks = book.sells.get_l2_data(3);
-        handler.handle_market_data_l2(book.symbol, l2_bids, l2_asks);
-    }
-}
 
 impl OrderMatcher for BasicMatcher {
     fn add_order<T: ExecutionHandler>(&mut self, book: &mut OrderBook,
@@ -330,7 +318,7 @@ impl OrderMatcher for BasicMatcher {
             book.add_order(o);
         }
 
-        self.publish_md(book, handler);
+        //self.publish_md(book, handler);
     }
 
     fn cancel_order<T: ExecutionHandler>(&mut self, book: &mut OrderBook,
@@ -340,6 +328,17 @@ impl OrderMatcher for BasicMatcher {
             OrderSide::Sell => book.sells.remove_order(order)
         }
 
-        self.publish_md(book, handler);
+        //self.publish_md(book, handler);
+    }
+
+    fn publish_md<T: ExecutionHandler>(&self, book: &OrderBook, handler: &T) {
+        let top_bid = book.buys.top_order();
+        let top_ask = book.sells.top_order();
+        handler.handle_market_data_l1(book.symbol, top_bid, top_ask);
+
+        // XXX: make depth configurable
+        let l2_bids = book.buys.get_l2_data(3);
+        let l2_asks = book.sells.get_l2_data(3);
+        handler.handle_market_data_l2(book.symbol, l2_bids, l2_asks);
     }
 }

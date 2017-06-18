@@ -28,17 +28,11 @@ pub struct SyncWaitRecord {
     pub pending_count: Cell<u32>
 }
 
-// XXX: this will expose things like symbol and any other information
-// needed for routing orders, but right now we don't need any of that
-pub enum OrderRoutingInfo {
-    NewOrderInfo    { symbol: Symbol, side: OrderSide },
-    ModifyOrderInfo { symbol_id: u32 }
-}
-
 pub trait OrderRouter {
-    fn route_order(&self, o: &OrderRoutingInfo, msg: EngineMessage) -> Result<(), String>;
-    fn create_order_id(&self, o: &OrderRoutingInfo) -> Result<OrderId, String>;
+    fn route_order(&self, msg: EngineMessage) -> Result<(), String>;
+    fn create_order_id(&self, symbol: &Symbol, side: &OrderSide) -> Result<OrderId, String>;
     fn broadcast_message(&self, msg: EngineMessage) -> Result<(), String>;
+    fn replay_message(&self, msg: EngineMessage) -> Result<(), String>;
     fn n_engine(&self) -> u32;
 }
 
@@ -180,11 +174,7 @@ impl<R> Server for Session<R> where R: 'static + Clone + OrderRouter {
             capnp::Error::failed("invalid symbol".to_string())
         }));
         let side = OrderSide::from(pry!(order.get_side()));
-        let order_info = OrderRoutingInfo::NewOrderInfo {
-            symbol: symbol,
-            side: side
-        };
-        let order_id = pry!(self.context.router.create_order_id(&order_info).map_err(|e| {
+        let order_id = pry!(self.context.router.create_order_id(&symbol, &side).map_err(|e| {
             capnp::Error::failed(e)
         }));
 
@@ -201,7 +191,7 @@ impl<R> Server for Session<R> where R: 'static + Clone + OrderRouter {
             capnp::Error::failed(e)
         }));
 
-        let send = pry!(self.context.router.route_order(&order_info, msg).map_err(|e| {
+        let send = pry!(self.context.router.route_order(msg).map_err(|e| {
             capnp::Error::failed("internal error".to_string())
         }));
 
@@ -251,9 +241,7 @@ impl<R> Server for Session<R> where R: 'static + Clone + OrderRouter {
             capnp::Error::failed(e)
         }));
 
-        let order_info = OrderRoutingInfo::ModifyOrderInfo { symbol_id: order_id.symbol_id() };
-
-        let send = pry!(self.context.router.route_order(&order_info, msg).map_err(|e| {
+        let send = pry!(self.context.router.route_order(msg).map_err(|e| {
             capnp::Error::failed("internal error".to_string())
         }));
 

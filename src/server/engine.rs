@@ -6,9 +6,12 @@ use libcix::book;
 use libcix::cix_capnp as cp;
 use libcix::order::trade_types::*;
 use messages::*;
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::rc::Rc;
 use std::thread;
+use std::time::Duration;
 use time;
 use tokio_core::reactor;
 
@@ -18,6 +21,7 @@ struct OrderEngine<TMatcher, THandler>
         where TMatcher: book::OrderMatcher,
               THandler: book::ExecutionHandler {
     symbols:        Vec<Symbol>,
+    dirty_symbols:  HashSet<Symbol>,
     books:          HashMap<Symbol, book::OrderBook>,
     matcher:        TMatcher,
     handler:        THandler,
@@ -43,19 +47,33 @@ impl EngineHandle {
         let r_clone = responder.clone();
 
         thread::spawn(move || -> Result<(), String> {
-            let mut engine = OrderEngine::new(s_clone, m_clone, h_clone, r_clone)
+            let mut engine = Rc::new(RefCell::new(OrderEngine::new(s_clone, m_clone, h_clone, r_clone)
                 .unwrap_or_else(|e| {
                     panic!("failed to create order engine: {}", e)
-                });
+                })));
             let mut core = reactor::Core::new().unwrap();
+            let handle = core.handle();
             let (tx, rx) = mpsc::channel(BUFFER_SIZE);
 
             // hand sender back to the calling thread
             channel_tx.complete(tx);
 
+            // XXX: Make md frequency configurable
+            let md_frequency = Duration::new(1, 0);
+            let md_engine = engine.clone();
+            let md_loop = reactor::Interval::new(md_frequency, &handle).unwrap().for_each(move |_| {
+                md_engine.borrow_mut().publish_md();
+                future::ok(())
+            }).map_err(|e| {
+                println!("market data timer error: {}", e.description());
+            });
+
+            core.handle().spawn(md_loop);
+
             // process incoming messages on event loop
+            let msg_engine = engine.clone();
             let done = rx.for_each(|msg| {
-                engine.process_message(msg).map_err(|e| {
+                msg_engine.borrow_mut().process_message(msg).map_err(|e| {
                     println!("error processing message: {}", e);
                 })
             });
@@ -81,6 +99,7 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
             Result<OrderEngine<TMatcher, THandler>, String> {
         let mut engine = OrderEngine {
             symbols: symbols,
+            dirty_symbols: HashSet::new(),
             books: HashMap::new(),
             matcher: matcher,
             handler: handler,
@@ -102,19 +121,24 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
     }
 
     fn new_order(&mut self, msg: NewOrderMessage) -> Result<(), String> {
+        let symbol = msg.symbol;
+
         let order = Order {
             id:         msg.order_id,
             user:       msg.user,
-            symbol:     msg.symbol,
+            symbol:     symbol.clone(),
             side:       msg.side,
             price:      msg.price,
             quantity:   msg.quantity,
             update:     time::now().to_timespec()
         };
 
-        let mut book = self.books.get_mut(&order.symbol).unwrap();
-        self.matcher.add_order(&mut book, order, &self.handler);
+        {
+            let mut book = self.books.get_mut(&symbol).unwrap();
+            self.matcher.add_order(&mut book, order, &self.handler);
+        }
 
+        self.symbol_dirty(symbol);
         Ok(())
     }
 
@@ -130,20 +154,32 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
             return Err("invalid order id".to_string());
         }
 
-        // XXX: really the books should be stored directly in a vector and the lookup hashmap
-        // would point into that
-        let mut book = self.books.get_mut(&self.symbols[sym_id as usize]).unwrap();
-        let target_user = {
-            let order = try!(book.get_order(msg.order_id)
-                             .ok_or("nonexistent order id".to_string()));
-            order.user
-        };
+        let symbol = self.symbols[sym_id as usize];
 
-        if target_user != msg.user {
-            return Err(format!("order {} does not belong to user {}", msg.order_id, msg.user));
+        {
+            // XXX: really the books should be stored directly in a vector and the lookup hashmap
+            // would point into that
+            let mut book = self.books.get_mut(&symbol).unwrap();
+            let target_user = {
+                match book.get_order(msg.order_id) {
+                    Some(order) => {
+                        order.user
+                    },
+                    None => {
+                        println!("Received cancel for unknown order {}", msg.order_id);
+                        return Ok(());
+                    }
+                }
+            };
+
+            if target_user != msg.user {
+                return Err(format!("order {} does not belong to user {}", msg.order_id, msg.user));
+            }
+
+            self.matcher.cancel_order(&mut book, msg.order_id, &self.handler);
         }
 
-        self.matcher.cancel_order(&mut book, msg.order_id, &self.handler);
+        self.symbol_dirty(symbol);
         Ok(())
     }
 
@@ -168,5 +204,20 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
             EngineMessage::SerializationMessage(seq) => self.serialization_point(seq),
             EngineMessage::NullMessage => unreachable!()
         }
+    }
+
+    fn symbol_dirty(&mut self, symbol: Symbol) {
+        self.dirty_symbols.insert(symbol);
+    }
+
+    fn publish_md(&mut self) {
+        println!("publishing market data for {} dirty symbols", self.dirty_symbols.len());
+
+        for symbol in self.dirty_symbols.iter() {
+            println!("publishing updated market data for symbol {}", symbol);
+            self.matcher.publish_md(self.books.get(symbol).unwrap(), &self.handler);
+        }
+
+        self.dirty_symbols.clear();
     }
 }

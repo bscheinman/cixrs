@@ -27,7 +27,7 @@ use libcix::book::{BasicMatcher, ExecutionHandler};
 use libcix::cix_capnp as cp;
 use libcix::order::trade_types;
 use messages::{EngineMessage, SessionMessage};
-use session::{OrderRouter, OrderRoutingInfo, ServerContext, ServerState};
+use session::{OrderRouter, ServerContext, ServerState};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::env::current_dir;
@@ -153,7 +153,7 @@ impl SingleRouter {
 }
 
 impl OrderRouter for SingleRouter {
-    fn route_order(&self, o: &OrderRoutingInfo, msg: EngineMessage) -> Result<(), String> {
+    fn route_order(&self, msg: EngineMessage) -> Result<(), String> {
         self.broadcast_message(msg)
     }
 
@@ -161,20 +161,37 @@ impl OrderRouter for SingleRouter {
         self.tx.clone().send(msg).wait().map(|_| ()).map_err(|e| e.description().to_string())
     }
 
-    fn create_order_id(&self, o: &OrderRoutingInfo) -> Result<trade_types::OrderId, String> {
-        if let OrderRoutingInfo::NewOrderInfo { symbol: ref symbol, side: side } = *o {
-            let sym_id = try!(self.symbols.get_symbol_id(symbol).map_err(|_| {
-                format!("invalid symbol {}", symbol)
-            }));
-            let ref seq = self.seq_list[sym_id];
-            let order_id = try!(trade_types::OrderId::new(sym_id as u32, side, seq.get()));
+    fn create_order_id(&self, symbol: &trade_types::Symbol, side: &trade_types::OrderSide)
+            -> Result<trade_types::OrderId, String> {
+        let sym_id = try!(self.symbols.get_symbol_id(symbol).map_err(|_| {
+            format!("invalid symbol {}", symbol)
+        }));
+        let ref seq = self.seq_list[sym_id];
+        let order_id = try!(trade_types::OrderId::new(sym_id as u32, *side, seq.get()));
 
-            // This is only accessed from the main thread so non-atomic updates like this are fine
-            seq.set(seq.get() + 1);
-            Ok(order_id)
-        } else {
-            unreachable!()
+        // This is only accessed from the main thread so non-atomic updates like this are fine
+        seq.set(seq.get() + 1);
+        Ok(order_id)
+    }
+
+    fn replay_message(&self, msg: EngineMessage) -> Result<(), String> {
+        if let EngineMessage::NewOrder(new_order) = msg {
+            println!("replaying order {}", new_order.order_id);
+
+            let order_id = new_order.order_id.clone();
+            let sym_id = try!(self.symbols.get_symbol_id(&new_order.symbol).map_err(|_| {
+                format!("invalid symbol {}", new_order.symbol)
+            }));
+
+            let order_seq = order_id.sequence();
+            let ref sym_seq = self.seq_list[sym_id];
+
+            if order_seq >= sym_seq.get() {
+                println!("advancing {} order sequence to {}", new_order.symbol, order_seq + 1);
+                sym_seq.set(order_seq + 1);
+            }
         }
+        self.route_order(msg)
     }
 
     fn n_engine(&self) -> u32 {
@@ -314,11 +331,7 @@ fn init_wal<P: AsRef<Path>, R: OrderRouter>(dir: P, router: &R) -> Wal {
     for entry in reader {
         match entry {
             Ok(msg) => {
-                // XXX: Actually populate this
-                // It might make more sense to have this automatically derive from the message
-                // itself because right now that's possible in all cases.
-                let routing_info = OrderRoutingInfo::ModifyOrderInfo{ symbol_id: 0u32 };
-                router.route_order(&routing_info, msg).unwrap();
+                router.replay_message(msg).unwrap();
                 replay_count += 1;
             },
             Err(e) => {
