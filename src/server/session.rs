@@ -22,6 +22,7 @@ type OrderWait = WaitEvent<ErrorCode>;
 type SyncWait = WaitEvent<()>;
 pub type OrderMap = HashMap<OrderId, OrderWait>;
 pub type SyncMap = HashMap<u32, SyncWaitRecord>;
+pub type OpenOrderMap = HashMap<OpenOrdersSequence, RefCell<OpenOrdersContext>>;
 
 pub struct SyncWaitRecord {
     pub event: SyncWait,
@@ -62,7 +63,8 @@ pub struct ServerContext<R> where R: 'static + Clone + OrderRouter {
     pub sync_gen: Rc<Cell<u32>>,
     pub sync_ticket: Cell<u32>,
     pub pending_syncs: RefCell<SyncMap>,
-    pub state: Cell<ServerState>
+    pub state: Cell<ServerState>,
+    pub pending_open_orders: Rc<RefCell<OpenOrderMap>>
 }
 
 impl<R> ServerContext<R> where R: 'static + Clone + OrderRouter {
@@ -76,7 +78,8 @@ impl<R> ServerContext<R> where R: 'static + Clone + OrderRouter {
             sync_gen: Rc::new(Cell::new(0u32)),
             sync_ticket: Cell::new(0u32),
             pending_syncs: RefCell::new(SyncMap::new()),
-            state: Cell::new(ServerState::Loading)
+            state: Cell::new(ServerState::Loading),
+            pending_open_orders: Rc::new(RefCell::new(OpenOrderMap::new()))
         }
     }
 
@@ -104,6 +107,7 @@ pub struct Session<R> where R: 'static + Clone + OrderRouter {
     context: Rc<ServerContext<R>>,
     user: UserId,
     authenticated: bool,
+    open_order_seq: u32
 }
 
 impl<R> Session<R> where R: 'static + Clone + OrderRouter {
@@ -111,7 +115,8 @@ impl<R> Session<R> where R: 'static + Clone + OrderRouter {
         Session {
             context: context,
             user: 0u64,
-            authenticated: false
+            authenticated: false,
+            open_order_seq: 0u32
         }
     }
 }
@@ -170,7 +175,7 @@ impl<R> Server for Session<R> where R: 'static + Clone + OrderRouter {
         }
 
         let order = pry!(pry!(params.get()).get_order());
-        let symbol = pry!(read_symbol(pry!(order.get_symbol())).map_err(|e| {
+        let symbol = pry!(Symbol::from_capnp(pry!(order.get_symbol())).map_err(|e| {
             capnp::Error::failed("invalid symbol".to_string())
         }));
         let side = OrderSide::from(pry!(order.get_side()));
@@ -247,6 +252,50 @@ impl<R> Server for Session<R> where R: 'static + Clone + OrderRouter {
 
         results.get().set_code(cp::ErrorCode::Ok);
         Promise::ok(())
+    }
+
+    fn get_open_orders(&mut self, params: GetOpenOrdersParams,
+                       mut results: GetOpenOrdersResults)
+                       -> Promise<(), capnp::Error> {
+        if !self.authenticated {
+            results.get().set_code(cp::ErrorCode::NotAuthenticated);
+            return Promise::ok(());
+        }
+
+        let seq = OpenOrdersSequence {
+            user: self.user,
+            seq: self.open_order_seq
+        };
+
+        self.open_order_seq += 1;
+
+        let msg = EngineMessage::GetOpenOrdersMessaage(seq.clone());
+
+        let send = pry!(self.context.router.broadcast_message(msg).map_err(|e| {
+            capnp::Error::failed("internal error".to_string())
+        }));
+
+        let send_future = OpenOrdersSend::new(seq.clone(),
+            self.context.pending_open_orders.clone());
+
+        self.context.pending_open_orders.borrow_mut().insert(seq,
+            RefCell::new(OpenOrdersContext::new(self.context.router.n_engine() as usize)));
+
+        Promise::from_future(send_future.and_then(move |o| {
+            let orders = o.borrow();
+            println!("found {} orders", orders.len());
+            results.get().set_code(cp::ErrorCode::Ok);
+
+            let mut ret_orders = results.get().init_orders(orders.len() as u32);
+            for (i, order) in orders.iter().enumerate() {
+                let order_out = ret_orders.borrow().get(i as u32);
+                order.to_capnp(order_out);
+            }
+
+            Ok(())
+        }).map_err(|e| {
+            capnp::Error::failed("internal error".to_string())
+        }))
     }
 
     fn execution_subscribe(&mut self, params: ExecutionSubscribeParams,

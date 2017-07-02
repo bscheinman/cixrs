@@ -4,6 +4,7 @@ use std::cell::Cell;
 use std::cmp::{min, Ordering};
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::iter::Chain;
 use std::rc::Rc;
 use time;
 
@@ -14,10 +15,10 @@ trait OrderComparer: heap::Comparer<Order> {
 }
 
 #[derive(Debug)]
-struct BuyComparer;
+pub struct BuyComparer;
 
 #[derive(Debug)]
-struct SellComparer;
+pub struct SellComparer;
 
 impl OrderComparer for BuyComparer {
     fn does_cross(new_order: &Order, book_order: &Order) -> bool {
@@ -257,10 +258,13 @@ impl ExecutionIdGenerator {
 }
 
 pub struct OrderBook {
-    symbol:     Symbol,
+    pub symbol: Symbol,
     buys:       BookSide<BuyComparer>,
     sells:      BookSide<SellComparer>
 }
+
+pub type OrderBookIterator<'a> = Chain<heap::HeapIterator<'a, Order, BuyComparer>,
+                                       heap::HeapIterator<'a, Order, SellComparer>>;
 
 impl OrderBook {
     pub fn new(symbol: Symbol, symbol_id: u32) -> OrderBook {
@@ -282,6 +286,10 @@ impl OrderBook {
             OrderSide::Buy => self.buys.get_order(order),
             OrderSide::Sell => self.sells.get_order(order)
         }
+    }
+
+    pub fn orders(&self) -> OrderBookIterator {
+        heap::HeapIterator::new(&self.buys.orders).chain(heap::HeapIterator::new(&self.sells.orders))
     }
 }
 

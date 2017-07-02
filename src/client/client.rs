@@ -105,11 +105,33 @@ impl ClientContext {
         }
     }
 
+    fn process_open_orders_line(&mut self) {
+        let mut open_orders_req = self.client.get_open_orders_request();
+        let response = self.core.run(open_orders_req.send().promise).unwrap();
+        let contents = response.get().unwrap();
+
+        match contents.get_code().unwrap() {
+            cp::ErrorCode::Ok => {
+                let orders = contents.get_orders().unwrap();
+                println!("we have {} open orders:", orders.len());
+
+                for order in orders.iter() {
+                    println!("{:?}", Order::from_capnp(order).unwrap());
+                }
+            },
+            _ => {
+                println!("failed to get open orders");
+            }
+        }
+    }
+
     pub fn process_line(&mut self, line: &String) {
         let fields: Vec<&str> = line.split_whitespace().collect();
         let action = fields[0].to_uppercase();
         if action == "CANCEL" {
             self.process_cancel_line(line);
+        } else if action == "OPEN_ORDERS" {
+            self.process_open_orders_line();
         } else {
             self.process_new_order_line(line);
         }
@@ -122,7 +144,7 @@ impl cp::execution_feed::Server for ExecutionFeedImpl {
                  results: cp::execution_feed::ExecutionResults)
                  -> Promise<(), capnp::Error> {
         let execution = params.get().unwrap().get_execution().unwrap();
-        let symbol = read_symbol(execution.get_symbol().unwrap()).unwrap();
+        let symbol = Symbol::from_capnp(execution.get_symbol().unwrap()).unwrap();
 
         println!("received execution {}: {} {} shares of {} @ {}",
                  execution.get_id(),

@@ -248,12 +248,24 @@ pub mod trade_types {
             Ok(s)
         }
 
+        pub fn to_bytes(&self) -> &[u8] {
+            &self.s
+        }
+
         pub fn from_str(s: &str) -> Result<Self, ()> {
             Self::from_bytes(s.as_bytes())
         }
 
         pub fn as_str(&self) -> &str {
             from_utf8(&self.s).unwrap()
+        }
+
+        pub fn from_capnp(r: capnp::text::Reader) -> Result<Self, Error> {
+            let raw_sym = r.as_bytes();
+
+            Self::from_bytes(raw_sym).map_err(|_| {
+                Error::new(ErrorCode::Other, "invalid symbol".to_string())
+            })
         }
     }
 
@@ -339,6 +351,15 @@ pub mod trade_types {
         }
     }
 
+    impl Into<cp::OrderSide> for OrderSide {
+        fn into(self) -> cp::OrderSide {
+            match self {
+                OrderSide::Buy => cp::OrderSide::Buy,
+                OrderSide::Sell => cp::OrderSide::Sell
+            }
+        }
+    }
+
     #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
     pub struct MdEntry {
         pub price:      Price,
@@ -385,6 +406,32 @@ pub mod trade_types {
         }
     }
 
+    impl Order {
+        pub fn to_capnp(&self, mut out: cp::order::Builder) {
+            out.set_id(self.id.raw());
+            out.set_user(self.user);
+            out.set_symbol(self.symbol.as_str());
+            out.set_side(self.side.into());
+            out.set_price(self.price);
+            out.set_quantity(self.quantity);
+            write_timestamp(out.get_updated().unwrap(), &self.update);
+        }
+
+        pub fn from_capnp(reader: cp::order::Reader) -> Result<Self, Error> {
+            Ok(Order {
+                id: try!(OrderId::from_raw(reader.get_id()).map_err(|e| {
+                    Error { code: ErrorCode::Other, desc: e }
+                })),
+                user: reader.get_user(),
+                symbol: try!(Symbol::from_capnp(try!(reader.get_symbol()))),
+                side: OrderSide::from(try!(reader.get_side())),
+                price: reader.get_price(),
+                quantity: reader.get_quantity(),
+                update: read_timestamp(try!(reader.get_updated()))
+            })
+        }
+    }
+
     pub fn read_uuid(r: cp::uuid::Reader) -> Result<uuid::Uuid, Error> {
         let bytes = try!(r.get_bytes().map_err(|_| {
             Error::new(ErrorCode::Other, "missing bytes".to_string())
@@ -412,12 +459,9 @@ pub mod trade_types {
         }
     }
 
-    pub fn read_symbol(r: capnp::text::Reader) -> Result<Symbol, Error> {
-        let raw_sym = r.as_bytes();
-
-        Symbol::from_bytes(raw_sym).map_err(|_| {
-            Error::new(ErrorCode::Other, "invalid symbol".to_string())
-        })
+    pub fn write_timestamp(mut out: cp::timestamp::Builder, ts: &time::Timespec) {
+        out.set_seconds(ts.sec);
+        out.set_nanos(ts.nsec);
     }
 
     pub struct Execution {

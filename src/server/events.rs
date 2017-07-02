@@ -1,5 +1,6 @@
 use libcix::order::trade_types::*;
-use session::{OrderMap, OrderRouter, ServerContext};
+use messages::*;
+use session::{OpenOrderMap, OrderMap, OrderRouter, ServerContext};
 use futures::{Async, Poll};
 use futures::future::Future;
 use futures::task::{park, Task};
@@ -40,6 +41,76 @@ impl Future for NewOrderSend {
 impl Drop for NewOrderSend {
     fn drop(&mut self) {
         self.status_map.borrow_mut().remove(&self.order_id);
+    }
+}
+
+pub struct OpenOrdersContext {
+    in_flight: usize,
+    orders: Rc<RefCell<Vec<Order>>>,
+    task: Task
+}
+
+#[derive(Clone)]
+pub struct OpenOrdersSend {
+    seq: OpenOrdersSequence,
+    context_map: Rc<RefCell<OpenOrderMap>>
+}
+
+impl OpenOrdersSend {
+    pub fn new(seq: OpenOrdersSequence, context_map: Rc<RefCell<OpenOrderMap>>) -> Self {
+        OpenOrdersSend {
+            seq: seq,
+            context_map: context_map
+        }
+    }
+}
+
+impl Future for OpenOrdersSend {
+    type Item = Rc<RefCell<Vec<Order>>>;
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match self.context_map.borrow().get(&self.seq) {
+            Some(c) => {
+                let context = c.borrow();
+
+                if context.in_flight > 0 {
+                    Ok(Async::NotReady)
+                } else {
+                    Ok(Async::Ready(context.orders.clone()))
+                }
+            },
+            None => {
+                println!("received open order response for unregistered identifier {}/{}",
+                         self.seq.user, self.seq.seq);
+                Err(())
+            }
+        }
+    }
+}
+
+impl OpenOrdersContext {
+    pub fn new(in_flight: usize) -> Self {
+        OpenOrdersContext {
+            in_flight: in_flight,
+            orders: Rc::new(RefCell::new(Vec::new())),
+            task: park()
+        }
+    }
+
+    pub fn recv(&mut self, msg: &OpenOrders) {
+        assert!((msg.n_order as usize) < OPEN_ORDER_MSG_MAX_LENGTH);
+        self.orders.borrow_mut().extend(msg.orders[0usize .. msg.n_order as usize].iter().map(|o| {
+            o.clone()
+        }).collect::<Vec<Order>>());
+        println!("received {} orders for user {} ({} total)", msg.n_order, msg.seq.user,
+            self.orders.borrow().len());
+        if msg.last_response {
+            self.in_flight -= 1;
+            if self.in_flight == 0 {
+                self.task.unpark();
+            }
+        }
     }
 }
 

@@ -81,6 +81,7 @@ interface TradingSession {
     executionSubscribe @2 (feed :ExecutionFeed)
         -> (code :ErrorCode, sub :ExecutionFeedSubscription);
     cancelOrder @3 (cancel :CancelOrder) -> (code :ErrorCode);
+    getOpenOrders @4 () -> (code :ErrorCode, orders :List(Order));
     #changeOrder @4 (change :ChangeOrder) -> (code :ErrorCode);
 }
 

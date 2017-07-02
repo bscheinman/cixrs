@@ -3,6 +3,7 @@ use std::cmp::{Ord, Ordering};
 use std::collections::HashSet;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
+use std::iter::Iterator;
 use std::marker::PhantomData;
 use std::vec::Vec;
 
@@ -579,8 +580,13 @@ impl<'a, T, TCmp> HeapIterator<'a, T, TCmp>
             md: node.md.get()
         });
     }
+}
 
-    pub fn next(&mut self) -> Option<T> {
+impl<'a, T, TCmp> Iterator for HeapIterator<'a, T, TCmp>
+        where T: 'a + Copy + Default, TCmp: 'a + Comparer<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<T> {
         if self.candidates.is_empty() {
             return None;
         }

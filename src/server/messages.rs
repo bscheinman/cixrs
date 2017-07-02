@@ -1,5 +1,31 @@
 use libcix::order::trade_types::*;
 
+pub const OPEN_ORDER_MSG_MAX_LENGTH: usize = 10;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct OpenOrdersSequence {
+    pub user: UserId,
+    pub seq: u32
+}
+
+pub struct OpenOrders {
+    pub seq: OpenOrdersSequence,
+    pub n_order: u32,
+    pub orders: [Order; OPEN_ORDER_MSG_MAX_LENGTH],
+    pub last_response: bool
+}
+
+impl OpenOrders {
+    pub fn new(seq: OpenOrdersSequence) -> Self {
+        OpenOrders {
+            seq: seq,
+            n_order: 0u32,
+            orders: [Order::default(); OPEN_ORDER_MSG_MAX_LENGTH],
+            last_response: false
+        }
+    }
+}
+
 // XXX: Rename now that this includes control metadata as well
 pub enum SessionMessage {
     NewOrderAck {
@@ -7,7 +33,8 @@ pub enum SessionMessage {
         status: ErrorCode
     },
     Execution(Execution),
-    SerializationResponse(u32)
+    SerializationResponse(u32),
+    OpenOrdersResponse(OpenOrders)
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -42,5 +69,6 @@ pub enum EngineMessage {
     //ChangeOrder(ChangeOrderMessage),
     CancelOrder(CancelOrderMessage),
     // Don't respond to this until all previous messages have been processed
-    SerializationMessage(u32)
+    SerializationMessage(u32),
+    GetOpenOrdersMessaage(OpenOrdersSequence)
 }

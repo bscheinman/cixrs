@@ -268,6 +268,15 @@ impl<R> ExecutionPublisher<R> where R: 'static + Clone + OrderRouter {
                 },
                 SessionMessage::SerializationResponse(gen) => {
                     Self::notify_serializations(context.as_ref(), gen);
+                },
+                SessionMessage::OpenOrdersResponse(orders) => {
+                    let order_map = context.pending_open_orders.borrow_mut();
+                    if let Some(waiter) = order_map.get(&orders.seq) {
+                        waiter.borrow_mut().recv(&orders);
+                    } else {
+                        println!("received response for unknown open order request {}/{}",
+                                 orders.seq.user, orders.seq.seq);
+                    }
                 }
             };
 

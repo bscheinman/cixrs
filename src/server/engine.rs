@@ -195,6 +195,52 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
         )
     }
 
+    fn get_open_orders(&mut self, seq: OpenOrdersSequence) -> Result<(), String> {
+        let mut user_orders = self.books.values().flat_map(|book| {
+            println!("reading orders for user {} from book {}", seq.user, book.symbol);
+            book.orders()
+        }).filter(|ref o| {
+            o.user == seq.user
+        });
+
+        loop {
+            let mut response = OpenOrders::new(seq.clone());
+
+            for i in 0 .. OPEN_ORDER_MSG_MAX_LENGTH {
+                match user_orders.next() {
+                    Some(order) => {
+                        response.orders[i] = order;
+                        response.n_order += 1;
+                    },
+                    None => {
+                        response.last_response = true;
+                        break;
+                    }
+                };
+            }
+
+            let last_response = response.last_response;
+
+            // XXX: probably don't need to wait on each of these sequentially
+            // Instead we can combine them into a single future and make sure they all copmlete at
+            // the end.  The channel should still guarantee delivery in the order that we attempt
+            // to send them.
+            try!(self.responder.clone().send(SessionMessage::OpenOrdersResponse(response))
+                 .wait()
+                .map(|_| ())
+                .map_err(|e| {
+                    format!("failed to send open orders response to {}/{}",
+                            seq.user, seq.seq).to_string()
+                }));
+
+            if last_response {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn process_message(&mut self, message: EngineMessage) ->
             Result<(), String> {
         match message {
@@ -202,6 +248,7 @@ impl<TMatcher, THandler> OrderEngine<TMatcher, THandler>
             //EngineMessage::ChangeOrder(msg) => self.change_order(msg),
             EngineMessage::CancelOrder(msg) => self.cancel_order(msg),
             EngineMessage::SerializationMessage(seq) => self.serialization_point(seq),
+            EngineMessage::GetOpenOrdersMessaage(seq) => self.get_open_orders(seq),
             EngineMessage::NullMessage => unreachable!()
         }
     }
