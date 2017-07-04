@@ -72,3 +72,10 @@ pub enum EngineMessage {
     SerializationMessage(u32),
     GetOpenOrdersMessaage(OpenOrdersSequence)
 }
+
+#[derive(Clone, Copy, Debug)]
+pub enum MdMessage {
+    L1Message(L1Md),
+    L2Message(L2Md),
+    Execution(MdExecution)
+}

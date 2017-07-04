@@ -7,6 +7,17 @@ const SYMBOL: &'static str = "GOOG";
 
 struct ExecutionPrinter;
 
+fn entry_display(entry: Option<MdEntry>) -> (String, String) {
+    match entry {
+        Some(data) => {
+            (format!("{}", data.price).to_string(), format!("{}", data.quantity).to_string())
+        },
+        None => {
+            ("___".to_string(), "___".to_string())
+        }
+    }
+}
+
 impl ExecutionHandler for ExecutionPrinter {
     fn ack_order(&self, order_id: OrderId, status: ErrorCode) {
         println!("ACK {}", order_id)
@@ -16,28 +27,32 @@ impl ExecutionHandler for ExecutionPrinter {
         println!("{}", execution)
     }
 
-    fn handle_market_data_l1(&self, symbol: Symbol, bid: MdEntry,
-                             ask: MdEntry) {
-        println!("bid {}x{}, ask {}x{}", bid.price, bid.quantity, ask.price,
-                 ask.quantity)
+    fn handle_market_data_l1(&self, md:L1Md) {
+        let (bid_price, bid_quantity) = entry_display(md.bid);
+        let (ask_price, ask_quantity) = entry_display(md.ask);
+
+        println!("{} bid {} x {}, ask {} x {}", md.symbol,
+                 bid_price,
+                 bid_quantity,
+                 ask_price,
+                 ask_quantity);
     }
 
-    fn handle_market_data_l2(&self, symbol: Symbol, bids: Vec<MdEntry>,
-                             asks: Vec<MdEntry>) {
+    fn handle_market_data_l2(&self, md: L2Md) {
         println!("Bids:");
-        if bids.len() == 0 {
+        if md.bids.n_entry == 0 {
             println!("None");
         } else {
-            for entry in bids {
+            for entry in md.bids.iter() {
                 println!("\t{}x{}", entry.price, entry.quantity);
             }
         }
 
         println!("Asks:");
-        if asks.len() == 0 {
+        if md.asks.n_entry == 0 {
             println!("None");
         } else {
-            for entry in asks {
+            for entry in md.asks.iter() {
                 println!("\t{}x{}", entry.price, entry.quantity);
             }
         }

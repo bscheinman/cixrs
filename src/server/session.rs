@@ -192,6 +192,9 @@ impl<R> Server for Session<R> where R: 'static + Clone + OrderRouter {
             quantity: order.get_quantity()
         });
 
+        // XXX: Move the WAL write to engine threads; this would also allow order ID assignment to
+        // happen on those threads and remove some of the Rc<RefCell<T>> garbage we have going on
+        // here
         pry!(self.context.wal.borrow_mut().write_entry(&msg).map_err(|e| {
             capnp::Error::failed(e)
         }));

@@ -109,9 +109,8 @@ struct BookSide<TCmp> where TCmp: OrderComparer {
 pub trait ExecutionHandler: Send {
     fn ack_order(&self, order_id: OrderId, status: ErrorCode);
     fn handle_match(&self, execution: Execution);
-    fn handle_market_data_l1(&self, symbol: Symbol, bid: MdEntry, ask: MdEntry);
-    fn handle_market_data_l2(&self, symbol: Symbol, bids: Vec<MdEntry>,
-                             asks: Vec<MdEntry>);
+    fn handle_market_data_l1(&self, md: L1Md);
+    fn handle_market_data_l2(&self, md: L2Md);
 }
 
 impl<TCmp> BookSide<TCmp> where TCmp: OrderComparer {
@@ -133,14 +132,11 @@ impl<TCmp> BookSide<TCmp> where TCmp: OrderComparer {
         }
     }
 
-    fn top_order(&self) -> MdEntry {
-        match self.orders.peek() {
-            None => MdEntry { price: 0.0f64, quantity: 0u32 },
-            Some(h) => {
-                let order = self.orders.get(h);
-                MdEntry { price: order.price, quantity: order.quantity }
-            }
-        }
+    fn top_order(&self) -> Option<MdEntry> {
+        self.orders.peek().map(|h| {
+            let order = self.orders.get(h);
+            MdEntry { price: order.price, quantity: order.quantity }
+        })
     }
 
     fn get_l2_data(&self, depth: usize) -> Vec<MdEntry> {
@@ -356,13 +352,23 @@ impl OrderMatcher for BasicMatcher {
     }
 
     fn publish_md<T: ExecutionHandler>(&self, book: &OrderBook, handler: &T) {
-        let top_bid = book.buys.top_order();
-        let top_ask = book.sells.top_order();
-        handler.handle_market_data_l1(book.symbol, top_bid, top_ask);
+        let l1md = L1Md {
+            symbol: book.symbol,
+            bid: book.buys.top_order(),
+            ask: book.sells.top_order(),
+            last: None // XXX
+        };
+        handler.handle_market_data_l1(l1md);
 
         // XXX: make depth configurable
-        let l2_bids = book.buys.get_l2_data(3);
-        let l2_asks = book.sells.get_l2_data(3);
-        handler.handle_market_data_l2(book.symbol, l2_bids, l2_asks);
+        let l2_bids = book.buys.get_l2_data(L2_MD_DEPTH);
+        let l2_asks = book.sells .get_l2_data(L2_MD_DEPTH);
+        let l2md = L2Md {
+            symbol: book.symbol,
+            bids: L2MdSide::from(l2_bids),
+            asks: L2MdSide::from(l2_asks),
+            last: None // XXX
+        };
+        handler.handle_market_data_l2(l2md);
     }
 }
