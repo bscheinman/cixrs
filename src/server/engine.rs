@@ -74,7 +74,7 @@ impl EngineHandle {
             let msg_engine = engine.clone();
             let done = rx.for_each(|msg| {
                 msg_engine.borrow_mut().process_message(msg).map_err(|e| {
-                    println!("error processing message: {}", e);
+                    println!("error processing engine message: {}", e);
                 })
             });
 

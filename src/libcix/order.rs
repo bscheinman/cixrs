@@ -1,11 +1,13 @@
 pub mod trade_types {
     use capnp;
     use cix_capnp as cp;
-    use std::cmp::{Eq, PartialEq};
+    use std::cmp::{Eq, min, PartialEq};
     use std::convert::From;
     use std::error;
     use std::fmt;
     use std::hash::{Hash,Hasher};
+    use std::iter::repeat;
+    use std::slice;
     use std::str::from_utf8;
     use time;
     use uuid;
@@ -18,6 +20,7 @@ pub mod trade_types {
     }
 
     pub const SYMBOL_MAX_LENGTH: usize = 8;
+    pub const L2_MD_DEPTH: usize = 5;
 
     pub type UserId = u64;
     pub type Price = f64;
@@ -360,10 +363,76 @@ pub mod trade_types {
         }
     }
 
-    #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+    #[derive(Clone, Copy, Debug, Default)]
     pub struct MdEntry {
         pub price:      Price,
         pub quantity:   Quantity
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct MdExecution {
+        pub symbol:     Symbol,
+        pub price:      Price,
+        pub quantity:   Quantity,
+        pub ts:         OrderTime
+    }
+
+    impl From<Execution> for MdExecution {
+        fn from(e: Execution) -> Self {
+            Self {
+                symbol:     e.symbol,
+                price:      e.price,
+                quantity:   e.quantity,
+                ts:         e.ts
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct L1Md {
+        pub symbol: Symbol,
+        pub bid: Option<MdEntry>,
+        pub ask: Option<MdEntry>,
+        pub last: Option<MdExecution>
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct L2MdSide {
+        pub entries: [MdEntry; L2_MD_DEPTH],
+        pub n_entry: usize
+    }
+
+    impl From<Vec<MdEntry>> for L2MdSide {
+        fn from(entry_vec: Vec<MdEntry>) -> Self {
+            let size = min(entry_vec.len(), L2_MD_DEPTH);
+            let entries = entry_vec.iter().chain(repeat(&MdEntry::default())).take(size)
+                .map(|e| e.clone())
+                .collect::<Vec<MdEntry>>();
+            let mut md = L2MdSide {
+                entries: [MdEntry::default(); L2_MD_DEPTH],
+                n_entry: size
+            };
+
+            md.entries[0..L2_MD_DEPTH].clone_from_slice(&entries.as_slice()[0..L2_MD_DEPTH]);
+
+            md
+        }
+    }
+
+    pub type L2MdOrders<'a> = slice::Iter<'a, MdEntry>;
+
+    impl L2MdSide {
+        pub fn iter(&self) -> L2MdOrders {
+            self.entries[0..self.n_entry].iter()
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct L2Md {
+        pub symbol: Symbol,
+        pub bids: L2MdSide,
+        pub asks: L2MdSide,
+        pub last: Option<MdExecution>
     }
 
     #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -464,6 +533,7 @@ pub mod trade_types {
         out.set_nanos(ts.nsec);
     }
 
+    #[derive(Clone, Copy)]
     pub struct Execution {
         pub id:         ExecutionId,
         pub ts:         OrderTime,

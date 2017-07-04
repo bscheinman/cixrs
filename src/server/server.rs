@@ -16,6 +16,7 @@ extern crate uuid;
 
 mod engine;
 mod events;
+mod md;
 mod messages;
 mod session;
 mod wal;
@@ -27,7 +28,8 @@ use futures::sync::mpsc;
 use libcix::book::{BasicMatcher, ExecutionHandler};
 use libcix::cix_capnp as cp;
 use libcix::order::trade_types;
-use messages::{EngineMessage, SessionMessage};
+use md::MdPublisherHandle;
+use messages::{EngineMessage, MdMessage, SessionMessage};
 use session::{OrderRouter, ServerContext, ServerState};
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -44,49 +46,38 @@ use wal::{Wal, WalDirectoryReader};
 
 #[derive(Clone)]
 struct FeedExecutionHandler {
-    tx: mpsc::Sender<SessionMessage>
+    session_tx: mpsc::Sender<SessionMessage>,
+    md_tx:      mpsc::Sender<MdMessage>
 }
 
 impl ExecutionHandler for FeedExecutionHandler {
     fn ack_order(&self, order_id: trade_types::OrderId,
                  status: trade_types::ErrorCode) {
-        self.tx.clone().send(SessionMessage::NewOrderAck {
+        self.session_tx.clone().send(SessionMessage::NewOrderAck {
             order_id: order_id,
             status: status
         }).wait();
     }
 
     fn handle_match(&self, execution: trade_types::Execution) {
-        self.tx.clone().send(SessionMessage::Execution(execution)).wait();
+        let md_execution = trade_types::MdExecution::from(execution.clone());
+        let exec_id = execution.id;
+
+        self.session_tx.clone().send(SessionMessage::Execution(execution)).map_err(|e| {
+                format!("failed to notify client of execution {}", exec_id).to_string()
+            })
+            .join(self.md_tx.clone().send(MdMessage::Execution(md_execution)).map_err(|e| {
+                format!("failed to publish market datafor execution {}", exec_id).to_string()
+            }))
+            .wait();
     }
 
-    fn handle_market_data_l1(&self, symbol: trade_types::Symbol,
-                             bid: trade_types::MdEntry,
-                             ask: trade_types::MdEntry) {
-        println!("{} bid {} x {}, ask {} x {}", symbol, bid.price, bid.quantity,
-                 ask.price, ask.quantity);
+    fn handle_market_data_l1(&self, md: trade_types::L1Md) {
+        self.md_tx.clone().send(MdMessage::L1Message(md)).wait();
     }
 
-    fn handle_market_data_l2(&self, symbol: trade_types::Symbol,
-                             bids: Vec<trade_types::MdEntry>,
-                             asks: Vec<trade_types::MdEntry>) {
-        println!("Bids:");
-        if bids.len() == 0 {
-            println!("None");
-        } else {
-            for entry in bids {
-                println!("\t{}x{}", entry.price, entry.quantity);
-            }
-        }
-
-        println!("Asks:");
-        if asks.len() == 0 {
-            println!("None");
-        } else {
-            for entry in asks {
-                println!("\t{}x{}", entry.price, entry.quantity);
-            }
-        }
+    fn handle_market_data_l2(&self, md: trade_types::L2Md) {
+        self.md_tx.clone().send(MdMessage::L2Message(md)).wait();
     }
 }
 
@@ -362,8 +353,12 @@ fn main() {
         trade_types::Symbol::from_str(x).unwrap()
     }).collect();
     let matcher = BasicMatcher{};
+    let md_publisher = MdPublisherHandle::new();
     let (exec_tx, exec_rx) = mpsc::channel(1024 as usize);
-    let handler = FeedExecutionHandler{ tx: exec_tx.clone() };
+    let handler = FeedExecutionHandler{
+        session_tx: exec_tx.clone(),
+        md_tx: md_publisher.tx
+    };
     let engine = EngineHandle::new(&symbols, &matcher, &handler, &exec_tx).unwrap();
     let sym_context = Rc::new(SymbolLookup::new(&symbols).unwrap());
     let router = SingleRouter::new(sym_context, engine.tx.clone());
