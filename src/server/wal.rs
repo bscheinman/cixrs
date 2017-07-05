@@ -30,14 +30,16 @@ pub struct WalFile {
 }
 
 impl WalFile {
-    fn open_impl<P: AsRef<Path>>(path: P, size: usize, writable: bool) -> Result<Self, String> {
-        let f = try!(OpenOptions::new().create_new(writable).read(true).write(writable).open(path.as_ref()).map_err(|e| {
+    fn open_impl<P: AsRef<Path>>(path: P, size: usize, create: bool, writable: bool)
+                -> Result<Self, String> {
+        let f = try!(OpenOptions::new().create_new(create).read(true).write(writable)
+                     .open(path.as_ref()).map_err(|e| {
             "failed to create file".to_string()
         }));
 
         let mut file_size = size;
 
-        if writable {
+        if create {
             try!(f.set_len(file_size as u64).map_err(|e| {
                 "failed to size file".to_string()
             }));
@@ -66,11 +68,11 @@ impl WalFile {
     }
 
     fn create<P: AsRef<Path>>(path: P, size: usize) -> Result<Self, String> {
-        Self::open_impl(path, size, true)
+        Self::open_impl(path, size, true, true)
     }
 
-    fn open<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        Self::open_impl(path, 0, false)
+    pub fn open<P: AsRef<Path>>(path: P, writable: bool) -> Result<Self, String> {
+        Self::open_impl(path, 0, false, writable)
     }
 
     fn write_entry(&mut self, entry: &EngineMessage) -> WriteResult {
@@ -93,33 +95,13 @@ impl WalFile {
             }
         }
     }
-}
 
-pub struct WalReader {
-    wal: WalFile
-}
-
-impl WalReader {
-    pub fn new(wal: WalFile) -> Self {
-        WalReader {
-            wal: wal
-        }
-    }
-
-    pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        Ok(Self::new(try!(WalFile::open(path))))
-    }
-}
-
-impl Iterator for WalReader {
-    type Item = Result<EngineMessage, String>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.wal.cursor == self.wal.capacity {
+    fn advance_entry(&mut self) -> Option<Result<EngineMessage, String>> {
+        if self.cursor == self.capacity {
             return None;
         }
 
-        match deserialize::<EngineMessage>(&(unsafe { self.wal.mem.as_mut_slice() }[self.wal.cursor..self.wal.capacity])) {
+        match deserialize::<EngineMessage>(&(unsafe { self.mem.as_mut_slice() }[self.cursor..self.capacity])) {
             Ok(ref msg) => {
                 // This is a very hacky way of checking for the end of the log.
                 // Really we should track in a header how far we've written or something like that
@@ -130,22 +112,36 @@ impl Iterator for WalReader {
                     // Is this really the best way to advance the cursor?
                     // I don't see anything in the bincode documentation that provides the byte count
                     // as part of the deserialization call
-                    self.wal.cursor += serialized_size(msg) as usize;
+                    self.cursor += serialized_size(msg) as usize;
                     //Some(Ok((*msg).clone()))
                     Some(Ok((*msg).clone()))
                 }
             },
             Err(e) => {
                 Some(Err(format!("invalid read at position {}: {}",
-                                 self.wal.cursor, e.description())))
+                                 self.cursor, e.description())))
             }
         }
+    }
+
+    fn advance_to_end(&mut self) -> Result<(), String> {
+        self.last().map(|msg| {
+            msg.map(|_| ())
+        }).unwrap_or(Ok(()))
+    }
+}
+
+impl Iterator for WalFile {
+    type Item = Result<EngineMessage, String>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.advance_entry()
     }
 }
 
 pub struct Wal {
     dir: PathBuf,
-    index: usize,
+    index: u32,
     file_size: usize,
     // For now just use one file and rotate as needed
     // In the future we might want to have a background thread that rotates logs
@@ -154,8 +150,8 @@ pub struct Wal {
 }
 
 impl Wal {
-    fn next_file<P: AsRef<Path>>(dir: P, file_size: usize, start_index: usize) ->
-            Result<(WalFile, usize), String> {
+    fn next_file<P: AsRef<Path>>(dir: P, file_size: usize, start_index: u32) ->
+            Result<(WalFile, u32), String> {
         let mut index = start_index;
         loop {
             let wal_path = dir.as_ref().join(format!("wal_{}", index));
@@ -182,9 +178,13 @@ impl Wal {
     }
 
     fn rotate(&mut self) -> Result<(), String> {
+        println!("rotating wal file from {}", self.index);
+
         // File and Mmap both automatically clean up when they go out of scope
         let (next_wal, next_index) = try!(Self::next_file(self.dir.as_path(), self.file_size,
                                                           self.index));
+
+        println!("rotated wal file to {}", next_index);
 
         self.wal = next_wal;
         self.index = next_index;
@@ -198,10 +198,23 @@ impl Wal {
         }
 
         let mut dir_buf = PathBuf::new();
-        dir_buf.push(dir);
+        dir_buf.push(dir.as_ref());
 
-        let (wal_file, first_index) = try!(Self::next_file(dir_buf.as_path(), file_size,
-                                                           0 as usize));
+        let (wal_file, first_index) = try!(try!(Wal::get_all_files(dir.as_ref())).iter().last().map(|index| {
+            println!("opening most recent wal file {}", *index);
+            (Wal::open_file(dir.as_ref(), *index, true), *index)
+        }).and_then(|(wal, index)| {
+            match wal.map(|mut w| { w.advance_to_end(); w }) {
+                Ok(w) => {
+                    println!("resuming wal file {} at position {}/{}", index, w.cursor, w.capacity);
+                    Some(Ok((w, index)))
+                },
+                Err(e) => None
+            }
+        }).unwrap_or_else(|| {
+            println!("creating new wal file");
+            Self::next_file(dir_buf.as_path(), file_size, 0u32)
+        }));
 
         let mut wal = Wal {
             dir: dir_buf,
@@ -227,19 +240,9 @@ impl Wal {
             }
         }
     }
-}
 
-pub struct WalDirectoryReader {
-    dir: OsString,
-    files: Vec<u32>,
-    file_index: usize,
-    reader: Option<WalReader>
-}
-
-impl WalDirectoryReader {
-    pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, String> {
+    fn get_all_files<P: AsRef<Path>>(dir: P) -> Result<Vec<u32>, String> {
         let path_name = dir.as_ref().to_str().unwrap_or("<unknown>").to_string();
-        let dir_str = dir.as_ref().as_os_str().to_os_string();
         let dir_iter: ReadDir = try!(read_dir(dir).map_err(|e| {
             format!("failed to walk directory {}", path_name)
         }));
@@ -257,9 +260,31 @@ impl WalDirectoryReader {
         }).collect();
         wal_files.sort();
 
+        Ok(wal_files)
+    }
+
+    fn open_file<P: AsRef<Path>>(dir: P, index: u32, writable: bool) -> Result<WalFile, String> {
+        let mut path = Path::new(dir.as_ref()).to_path_buf();
+        let basename = format!("wal_{}", index);
+
+        path.push(basename);
+
+        WalFile::open(path.as_path(), writable)
+    }
+}
+
+pub struct WalDirectoryReader {
+    dir: OsString,
+    files: Vec<u32>,
+    file_index: usize,
+    reader: Option<WalFile>
+}
+
+impl WalDirectoryReader {
+    pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, String> {
         Ok(WalDirectoryReader {
-            dir: dir_str,
-            files: wal_files,
+            dir: dir.as_ref().as_os_str().to_os_string(),
+            files: try!(Wal::get_all_files(dir)),
             file_index: 0usize,
             reader: None
         })
@@ -281,19 +306,15 @@ impl Iterator for WalDirectoryReader {
                 return None;
             }
 
-            let basename = format!("wal_{}", self.files[self.file_index]);
-            self.file_index += 1;
-
-            println!("reading entries from wal file {}", basename);
-
-            let mut path = Path::new(&self.dir).to_path_buf();
-            path.push(basename);
-            self.reader = Some(match WalReader::from_path(path.as_path()) {
+            self.reader = Some(match Wal::open_file(Path::new(&self.dir),
+                                                    self.files[self.file_index], false) {
                 Ok(r) => r,
                 Err(e) => {
                     return Some(Err(e));
                 }
             });
+
+            self.file_index += 1;
         }
 
         unreachable!()
