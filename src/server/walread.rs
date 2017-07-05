@@ -46,7 +46,7 @@ fn main() {
         let reader = wal::WalDirectoryReader::new(wal_path).unwrap();
         print_entries(reader);
     } else {
-        let reader = wal::WalFile::open(wal_path).unwrap();
+        let reader = wal::WalFile::open(wal_path, false).unwrap();
         print_entries(reader);
     }
 }

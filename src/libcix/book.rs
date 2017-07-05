@@ -97,7 +97,7 @@ impl heap::Comparer<Order> for SellComparer {
 trait OrderProcessor<THandle> {
     fn has_order(&self, order_id: OrderId) -> bool;
     fn add_order(&mut self, new_order: Order) -> THandle;
-    fn match_order(&mut self, new_order: &mut Order, handler: &ExecutionHandler);
+    fn match_order(&mut self, new_order: &mut Order) -> Vec<Execution>;
 }
 
 struct BookSide<TCmp> where TCmp: OrderComparer {
@@ -108,7 +108,7 @@ struct BookSide<TCmp> where TCmp: OrderComparer {
 
 pub trait ExecutionHandler: Send {
     fn ack_order(&self, order_id: OrderId, status: ErrorCode);
-    fn handle_match(&self, execution: Execution);
+    fn handle_match(&self, execution: &Execution);
     fn handle_market_data_l1(&self, md: L1Md);
     fn handle_market_data_l2(&self, md: L2Md);
 }
@@ -187,7 +187,9 @@ impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
         handle
     }
 
-    fn match_order(&mut self, new_order: &mut Order, handler: &ExecutionHandler) {
+    fn match_order(&mut self, new_order: &mut Order) -> Vec<Execution> {
+        let mut execs = Vec::new();
+
         while let Some(handle) = self.orders.peek() {
             let ex = {
                 let book_order = self.orders.get(handle);
@@ -210,7 +212,7 @@ impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
             };
             let quantity = ex.quantity;
 
-            handler.handle_match(ex);
+            execs.push(ex);
             new_order.quantity -= quantity;
 
             self.orders.update(handle, |order| {
@@ -230,6 +232,8 @@ impl<TCmp> OrderProcessor<heap::HeapHandle> for BookSide<TCmp>
                 break;
             }
         }
+
+        execs
     }
 }
 
@@ -256,7 +260,8 @@ impl ExecutionIdGenerator {
 pub struct OrderBook {
     pub symbol: Symbol,
     buys:       BookSide<BuyComparer>,
-    sells:      BookSide<SellComparer>
+    sells:      BookSide<SellComparer>,
+    last_exec:  Option<MdExecution>
 }
 
 pub type OrderBookIterator<'a> = Chain<heap::HeapIterator<'a, Order, BuyComparer>,
@@ -268,7 +273,8 @@ impl OrderBook {
         OrderBook {
             symbol:     symbol,
             buys:       BookSide::<BuyComparer>::new(id_gen.clone()),
-            sells:      BookSide::<SellComparer>::new(id_gen.clone())
+            sells:      BookSide::<SellComparer>::new(id_gen.clone()),
+            last_exec:  None
         }
     }
 
@@ -324,7 +330,15 @@ impl OrderMatcher for BasicMatcher {
                 OrderSide::Sell => &mut book.buys
             };
 
-            counter_book.match_order(&mut o, handler);
+            let execs = counter_book.match_order(&mut o);
+
+            for exec in execs.iter() {
+                handler.handle_match(exec);
+            }
+
+            book.last_exec = execs.iter().last().map(|exec| {
+                MdExecution::from(*exec)
+            }).or(book.last_exec);
         }
 
         if o.quantity > 0 {
@@ -356,7 +370,7 @@ impl OrderMatcher for BasicMatcher {
             symbol: book.symbol,
             bid: book.buys.top_order(),
             ask: book.sells.top_order(),
-            last: None // XXX
+            last: book.last_exec
         };
         handler.handle_market_data_l1(l1md);
 
@@ -367,7 +381,7 @@ impl OrderMatcher for BasicMatcher {
             symbol: book.symbol,
             bids: L2MdSide::from(l2_bids),
             asks: L2MdSide::from(l2_asks),
-            last: None // XXX
+            last: book.last_exec
         };
         handler.handle_market_data_l2(l2md);
     }

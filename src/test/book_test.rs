@@ -23,7 +23,7 @@ impl ExecutionHandler for ExecutionPrinter {
         println!("ACK {}", order_id)
     }
 
-    fn handle_match(&self, execution: Execution) {
+    fn handle_match(&self, execution: &Execution) {
         println!("{}", execution)
     }
 

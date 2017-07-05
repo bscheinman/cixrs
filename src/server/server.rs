@@ -59,11 +59,11 @@ impl ExecutionHandler for FeedExecutionHandler {
         }).wait();
     }
 
-    fn handle_match(&self, execution: trade_types::Execution) {
+    fn handle_match(&self, execution: &trade_types::Execution) {
         let md_execution = trade_types::MdExecution::from(execution.clone());
         let exec_id = execution.id;
 
-        self.session_tx.clone().send(SessionMessage::Execution(execution)).map_err(|e| {
+        self.session_tx.clone().send(SessionMessage::Execution(*execution)).map_err(|e| {
                 format!("failed to notify client of execution {}", exec_id).to_string()
             })
             .join(self.md_tx.clone().send(MdMessage::Execution(md_execution)).map_err(|e| {
