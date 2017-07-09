@@ -1,6 +1,7 @@
 use futures;
 use futures::future;
 use futures::{Future, Sink, Stream};
+use futures::stream::MergedItem;
 use futures::sync::{mpsc, oneshot};
 use libcix::book;
 use libcix::cix_capnp as cp;
@@ -47,10 +48,10 @@ impl EngineHandle {
         let r_clone = responder.clone();
 
         thread::spawn(move || -> Result<(), String> {
-            let mut engine = Rc::new(RefCell::new(OrderEngine::new(s_clone, m_clone, h_clone, r_clone)
+            let mut engine = OrderEngine::new(s_clone, m_clone, h_clone, r_clone)
                 .unwrap_or_else(|e| {
                     panic!("failed to create order engine: {}", e)
-                })));
+                });
             let mut core = reactor::Core::new().unwrap();
             let handle = core.handle();
             let (tx, rx) = mpsc::channel(BUFFER_SIZE);
@@ -60,26 +61,28 @@ impl EngineHandle {
 
             // XXX: Make md frequency configurable
             let md_frequency = Duration::new(1, 0);
-            let md_engine = engine.clone();
-            let md_loop = reactor::Interval::new(md_frequency, &handle).unwrap().for_each(move |_| {
-                md_engine.borrow_mut().publish_md();
+            let md_loop = reactor::Interval::new(md_frequency, &handle).unwrap().map_err(|e| {
+                panic!("market data timer error: {}", e.description());
+            });
+
+            let full_loop = rx.merge(md_loop).for_each(move |item| {
+                match item {
+                    MergedItem::First(msg) => {
+                        engine.process_message(msg);
+                    },
+                    MergedItem::Second(_) => {
+                        engine.publish_md();
+                    },
+                    MergedItem::Both(msg, _) => {
+                        engine.process_message(msg);
+                        engine.publish_md();
+                    }
+                }
+
                 future::ok(())
-            }).map_err(|e| {
-                println!("market data timer error: {}", e.description());
             });
 
-            core.handle().spawn(md_loop);
-
-            // process incoming messages on event loop
-            let msg_engine = engine.clone();
-            let done = rx.for_each(|msg| {
-                msg_engine.borrow_mut().process_message(msg).map_err(|e| {
-                    println!("error processing engine message: {}", e);
-                })
-            });
-
-            core.run(done);
-
+            core.run(full_loop);
             Ok(())
         });
 
